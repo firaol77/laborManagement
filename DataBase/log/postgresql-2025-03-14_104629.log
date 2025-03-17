@@ -1,0 +1,4 @@
+2025-03-14 10:46:29 EAT LOG:  database system was shut down at 2025-03-14 10:30:23 EAT
+2025-03-14 10:49:02 EAT LOG:  shutting down
+2025-03-14 10:49:02 EAT LOG:  checkpoint starting: shutdown immediate
+2025-03-14 10:49:02 EAT LOG:  checkpoint complete: wrote 3 buffers (0.0%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.006 s, sync=0.004 s, total=0.024 s; sync files=2, longest=0.002 s, average=0.002 s; distance=0 kB, estimate=0 kB; lsn=0/15BAFD8, redo lsn=0/15BAFD8
