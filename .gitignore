@@ -1,0 +1,13 @@
+# Ignore the large database file
+DataBase/postgresql_17.exe
+
+# Ignore all .exe files (optional, if you don't want to track any .exe files)
+*.exe
+
+# Ignore build artifacts, logs, and other temporary files
+node_modules/
+dist/
+logs/
+*.log
+*.tmp
+.env
