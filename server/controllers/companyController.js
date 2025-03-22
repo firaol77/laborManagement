@@ -1,115 +1,53 @@
 const { Company, CompanyAdmin } = require('../models');
 const bcrypt = require('bcrypt');
+const sequelize = require('../config/database');
 
 exports.createCompany = async (req, res) => {
+    const t = await sequelize.transaction();
     try {
         const { name, adminUsername, adminPassword } = req.body;
+        console.log('Received request to create company:', { name, adminUsername, adminPassword });
 
-        // Create company
-        const company = await Company.create({
-            name,
-            status: 'active',
-            created_at: new Date()
-        });
+        if (!name || !adminUsername || !adminPassword) {
+            throw new Error('Missing required fields: name, adminUsername, or adminPassword');
+        }
 
-        // Hash password and create company admin
+        const company = await Company.create({ name }, { transaction: t });
+        console.log('Company created:', company.toJSON());
+
         const hashedPassword = await bcrypt.hash(adminPassword, 10);
-        await CompanyAdmin.create({
+        const admin = await CompanyAdmin.create({
             company_id: company.id,
             username: adminUsername,
             password: hashedPassword,
             role: 'company_admin',
-            created_at: new Date()
-        });
+            status: 'active',
+        }, { transaction: t });
+        console.log('Admin created:', admin.toJSON());
 
+        await t.commit();
         res.status(201).json({
-            message: 'Company and admin created successfully',
-            company
+            message: 'Company and admin created',
+            company: company.toJSON(),
+            admin: admin.toJSON()
         });
     } catch (err) {
-        console.error('Error creating company:', err);
-        res.status(500).json({ error: 'Failed to create company' });
-    }
-};
-
-exports.getAllCompanies = async (req, res) => {
-    try {
-        console.log('Fetching companies...');
-        const companies = await Company.findAll();
-        res.json(companies);
-    } catch (err) {
-        console.error('Error fetching companies:', err);
-        res.status(500).json({ error: 'Failed to fetch companies' });
-    }
-};
-
-exports.getCompanyById = async (req, res) => {
-    try {
-        const company = await Company.findByPk(req.params.id);
-        if (!company) {
-            return res.status(404).json({ error: 'Company not found' });
-        }
-        res.json(company);
-    } catch (err) {
-        console.error('Error fetching company:', err);
-        res.status(500).json({ error: 'Failed to fetch company' });
-    }
-};
-
-exports.updateCompanyStatus = async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { status } = req.body;
-
-        // Prevent deactivation of Super Admin Company
-        if (id === '1') {
-            return res.status(403).json({ 
-                error: 'Super Admin Company cannot be deactivated' 
-            });
-        }
-
-        const company = await Company.findByPk(id);
-        
-        if (!company) {
-            return res.status(404).json({ error: 'Company not found' });
-        }
-
-        // Update company status
-        company.status = status;
-        await company.save();
-
-        // Cascade deactivation to company admins
-        if (status === 'inactive') {
-            await CompanyAdmin.update(
-                { status: 'inactive' }, 
-                { where: { company_id: id } }
-            );
-        }
-
-        res.json({ message: 'Company status updated successfully', company });
-    } catch (err) {
-        console.error('Error updating company status:', err);
-        res.status(500).json({ error: 'Failed to update company status' });
+        await t.rollback();
+        console.error('Error creating company:', err.message, err.stack);
+        res.status(500).json({ error: 'Failed to create company', details: err.message });
     }
 };
 
 exports.deleteCompany = async (req, res) => {
     try {
         const { id } = req.params;
-
-        // Prevent deletion of Super Admin Company
         if (id === '1') {
-            return res.status(403).json({ 
-                error: 'Super Admin Company cannot be deleted' 
-            });
+            return res.status(403).json({ error: 'Super Admin Company cannot be deleted' });
         }
-
         const company = await Company.findByPk(id);
-        
         if (!company) {
             return res.status(404).json({ error: 'Company not found' });
         }
-
         await company.destroy();
         res.json({ message: 'Company deleted successfully' });
     } catch (err) {

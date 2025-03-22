@@ -1,81 +1,82 @@
-import { useState } from 'react';
-import { Form, Button, Alert } from 'react-bootstrap';
+import React, { useState } from 'react';
 import axios from 'axios';
+import { useNavigate } from 'react-router-dom';
 
 const Login = () => {
-    const [username, setUsername] = useState('');
-    const [password, setPassword] = useState('');
-    const [error, setError] = useState('');
+  const [credentials, setCredentials] = useState({ username: '', password: '' });
+  const [error, setError] = useState('');
+  const navigate = useNavigate();
 
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-        try {
-            console.log('Attempting login with:', { username });
-            const response = await axios.post('http://localhost:3001/api/auth/login', {
-                username,
-                password,
-            });
-            console.log('Login response:', response.data);
-            
-            // Store token and user data
-            localStorage.setItem('token', response.data.token);
-            
-            // Decode and store user data
-            const tokenData = JSON.parse(atob(response.data.token.split('.')[1]));
-            console.log('Decoded token data:', tokenData);
-            
-            localStorage.setItem('role', tokenData.role);
-            localStorage.setItem('user', JSON.stringify(tokenData));
-            
-            // Redirect based on role
-            if (tokenData.role === 'super_admin') {
-                console.log('Redirecting to super admin dashboard');
-                window.location.href = '/super-admin';
-            } else if (tokenData.role === 'company_admin') {
-                console.log('Redirecting to company admin dashboard');
-                window.location.href = '/company-admin';
-            } else {
-                console.log('Unknown role:', tokenData.role);
-            }
-        } catch (err) {
-            console.error('Login error:', err.response?.data || err);
-            setError(err.response?.data?.error || 'Invalid credentials');
-        }
-    };
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    try {
+      console.log('Attempting login with:', credentials);
+      const response = await axios.post(
+        'http://localhost:3001/api/auth/login',
+        credentials,
+        { withCredentials: true }
+      );
+      console.log('Login response:', response.data);
 
-    return (
-        <div className="container mt-5">
-            <h2>Login</h2>
-            {error && <Alert variant="danger">{error}</Alert>}
-            <Form onSubmit={handleSubmit}>
-                <Form.Group controlId="username">
-                    <Form.Label>Username</Form.Label>
-                    <Form.Control
-                        type="text"
-                        value={username}
-                        onChange={(e) => setUsername(e.target.value)}
-                        required
-                    />
-                </Form.Group>
-                <Form.Group controlId="password" className="mt-3">
-                    <Form.Label>Password</Form.Label>
-                    <Form.Control
-                        type="password"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        required
-                    />
-                </Form.Group>
-                <Button variant="primary" type="submit" className="mt-3">
-                    Login
-                </Button>
-            </Form>
+      const { user } = response.data;
+      const role = user.role;
+
+      localStorage.setItem('role', role);
+
+      if (role === 'super_admin') {
+        console.log('Redirecting to super admin dashboard');
+        navigate('/super-admin');
+      } else if (role === 'company_admin') {
+        console.log('Redirecting to company admin dashboard');
+        navigate('/company-admin');
+      } else if (role === 'worker_manager') {
+        console.log('Redirecting to worker manager dashboard');
+        navigate('/worker-manager');
+      } else {
+        console.log('Unknown role:', role);
+        setError('Unknown role. Please contact the administrator.');
+      }
+    } catch (err) {
+      console.error('Login error:', err.response?.data || err);
+      setError(err.response?.data?.error || 'Invalid credentials');
+    }
+  };
+
+  return (
+    <div className="container mt-4">
+      <div className="dashboard-header">
+        <h2 className="dashboard-title">Login</h2>
+      </div>
+      {error && <div className="alert alert-danger">{error}</div>}
+      <form onSubmit={handleLogin} className="worker-creation-form">
+        <div className="form-group">
+          <label htmlFor="username" className="form-label">Username</label>
+          <input
+            type="text"
+            className="form-control"
+            id="username"
+            value={credentials.username}
+            onChange={(e) => setCredentials({ ...credentials, username: e.target.value })}
+            placeholder="Enter username"
+            required
+          />
         </div>
-    );
+        <div className="form-group">
+          <label htmlFor="password" className="form-label">Password</label>
+          <input
+            type="password"
+            className="form-control"
+            id="password"
+            value={credentials.password}
+            onChange={(e) => setCredentials({ ...credentials, password: e.target.value })}
+            placeholder="Enter password"
+            required
+          />
+        </div>
+        <button type="submit" className="btn btn-primary btn-create">Login</button>
+      </form>
+    </div>
+  );
 };
 
 export default Login;
-
-// When logging in, use:
-// username: superadmin
-// password: admin123

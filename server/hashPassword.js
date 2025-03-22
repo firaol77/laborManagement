@@ -1,9 +1,5 @@
 const bcrypt = require('bcrypt');
 
-async function hashPassword() {
-    const password = 'admin123';
-    const hashedPassword = await bcrypt.hash(password, 10);
-    console.log('Hashed password:', hashedPassword);
-}
-
-hashPassword();
+const password = 'admin123';
+const hashedPassword = bcrypt.hashSync(password, 10); // 10 is the salt rounds
+console.log(hashedPassword);

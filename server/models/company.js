@@ -9,7 +9,8 @@ module.exports = (sequelize) => {
         },
         name: {
             type: DataTypes.STRING(100),
-            allowNull: false
+            allowNull: false,
+            unique: true,
         },
         status: {
             type: DataTypes.STRING(20),
@@ -34,19 +35,25 @@ module.exports = (sequelize) => {
 
     // Define class methods
     Company.associate = (models) => {
+        // Company Admins
         Company.hasMany(models.CompanyAdmin, {
             foreignKey: 'company_id',
-            as: 'admins'
+            as: 'admins',
+            onDelete: 'CASCADE' // Add cascade deletion
         });
-        
+    
+        // Labor Workers
         Company.hasMany(models.LaborWorker, {
             foreignKey: 'company_id',
-            as: 'workers'
+            as: 'workers',
+            onDelete: 'CASCADE' // Add cascade deletion
         });
-
+    
+        // Payroll Rules
         Company.hasMany(models.PayrollRule, {
             foreignKey: 'company_id',
-            as: 'payrollRules'
+            as: 'payrollRules',
+            onDelete: 'CASCADE' // Add cascade deletion
         });
     };
 

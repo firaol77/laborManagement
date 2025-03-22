@@ -25,36 +25,39 @@ exports.getWorkLogs = async (req, res) => {
 
 exports.createWorkLog = async (req, res) => {
     try {
-        const { worker_id, date, hours_worked, overtime_hours } = req.body;
-        if (!worker_id || !date || !hours_worked) {
-            return res.status(400).json({ error: 'worker_id, date, and hours_worked are required' });
-        }
-
-        const worker = await LaborWorker.findByPk(worker_id);
-        if (!worker) {
-            return res.status(404).json({ error: 'Worker not found' });
-        }
-
-        const payrollRule = await PayrollRule.findOne({ where: { company_id: worker.company_id } });
-        if (!payrollRule) {
-            return res.status(404).json({ error: 'Payroll rules not found for this company' });
-        }
-
-        const calculated_salary = (hours_worked * payrollRule.daily_rate) + ((overtime_hours || 0) * payrollRule.overtime_rate);
-
-        const workLog = await WorkLog.create({
-            worker_id,
-            date,
-            hours_worked,
-            overtime_hours: overtime_hours || 0,
-            calculated_salary,
-        });
-        res.status(201).json(workLog);
+      const { worker_id, date, hours_worked, overtime_hours } = req.body;
+      if (!worker_id || !date || !hours_worked) {
+        return res.status(400).json({ error: 'worker_id, date, and hours_worked are required' });
+      }
+  
+      const worker = await LaborWorker.findByPk(worker_id);
+      if (!worker) {
+        return res.status(404).json({ error: 'Worker not found' });
+      }
+  
+      const payrollRule = await PayrollRule.findOne({ where: { company_id: worker.company_id } });
+      if (!payrollRule) {
+        return res.status(404).json({ error: 'Payroll rules not found for this company' });
+      }
+  
+      const calculated_salary =
+        hours_worked * (payrollRule.daily_rate / payrollRule.standard_working_hours) +
+        (overtime_hours || 0) * payrollRule.overtime_rate;
+  
+      const workLog = await WorkLog.create({
+        worker_id,
+        date,
+        hours_worked,
+        overtime_hours: overtime_hours || 0,
+        calculated_salary,
+      });
+  
+      res.status(201).json(workLog);
     } catch (err) {
-        console.error('Error creating work log:', err);
-        res.status(500).json({ error: 'Failed to create work log' });
+      console.error('Error creating work log:', err);
+      res.status(500).json({ error: 'Failed to create work log' });
     }
-};
+  };
 
 exports.updateWorkLog = async (req, res) => {
     try {

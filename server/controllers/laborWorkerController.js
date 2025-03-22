@@ -53,46 +53,51 @@ exports.getWorkers = async (req, res) => {
 };
 
 exports.createWorker = [
-    upload.single('photo'),
-    async (req, res) => {
-        try {
-            const workerData = {
-                ...req.body,
-                photo_url: req.file ? req.file.path : null,
-                company_id: req.user.company_id
-            };
+  upload.single('photo'),
+  async (req, res) => {
+    try {
+      const workerData = {
+        company_id: req.user.company_id,
+        name: req.body.name,
+        bankName: req.body.bankName,
+        accountNumber: req.body.accountNumber,
+        photo_url: req.file ? req.file.path : null,
+        worker_id: req.body.worker_id,
+        status: 'active',
+        regdate: new Date().toISOString().split('T')[0], 
+      };
 
-            const worker = await LaborWorker.create(workerData);
-            res.status(201).json(worker);
-        } catch (err) {
-            console.error('Error creating worker:', err);
-            res.status(500).json({ error: 'Failed to create worker' });
-        }
+      const worker = await LaborWorker.create(workerData);
+      res.status(201).json(worker);
+    } catch (err) {
+      console.error('Error creating worker:', err);
+      res.status(500).json({ error: 'Failed to create worker' });
     }
+  },
 ];
 
-exports.updateLaborWorker = async (req, res) => {
+  exports.updateLaborWorker = async (req, res) => {
     try {
-        const { id } = req.params;
-        const { company_id, name, bank_id, account_number, worker_id, status } = req.body;
-        const worker = await LaborWorker.findByPk(id);
-        if (!worker) {
-            return res.status(404).json({ error: 'Worker not found' });
-        }
-        await worker.update({
-            company_id: company_id || worker.company_id,
-            name: name || worker.name,
-            bank_id: bank_id || worker.bank_id,
-            account_number: account_number || worker.account_number,
-            worker_id: worker_id || worker.worker_id,
-            status: status || worker.status,
-        });
-        res.json(worker);
+      const { id } = req.params;
+      const { company_id, name, bankName, accountNumber, worker_id, status } = req.body;
+      const worker = await LaborWorker.findByPk(id);
+      if (!worker) {
+        return res.status(404).json({ error: 'Worker not found' });
+      }
+      await worker.update({
+        company_id: company_id || worker.company_id,
+        name: name || worker.name,
+        bankName: bankName || worker.bankName,
+        accountNumber: accountNumber || worker.accountNumber,
+        worker_id: worker_id || worker.worker_id,
+        status: status || worker.status,
+      });
+      res.json(worker);
     } catch (err) {
-        console.error('Error updating worker:', err);
-        res.status(500).json({ error: 'Failed to update worker' });
+      console.error('Error updating worker:', err);
+      res.status(500).json({ error: 'Failed to update worker' });
     }
-};
+  };
 
 exports.deleteLaborWorker = async (req, res) => {
     try {
