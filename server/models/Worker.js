@@ -1,9 +1,9 @@
 const { DataTypes, Model } = require("sequelize")
 
 module.exports = (sequelize) => {
-  class LaborWorker extends Model {}
+  class Worker extends Model {}
 
-  LaborWorker.init(
+  Worker.init(
     {
       id: {
         type: DataTypes.INTEGER,
@@ -40,8 +40,8 @@ module.exports = (sequelize) => {
         unique: true,
       },
       status: {
-        type: DataTypes.ENUM("pending", "active", "inactive"),
-        defaultValue: "pending",
+        type: DataTypes.ENUM(['active', 'inactive', 'pending']),
+        defaultValue: 'pending',
       },
       overtime_hours: {
         type: DataTypes.DECIMAL(5, 2),
@@ -58,14 +58,14 @@ module.exports = (sequelize) => {
     },
     {
       sequelize,
-      modelName: "LaborWorker",
-      tableName: "labor_workers",
+      modelName: "Worker",
+      tableName: "workers",
       timestamps: true,
       createdAt: "created_at",
       updatedAt: "updated_at",
     },
   )
 
-  return LaborWorker
+  return Worker
 }
 

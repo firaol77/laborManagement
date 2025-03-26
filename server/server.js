@@ -1,105 +1,205 @@
-require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const cookieParser = require('cookie-parser');
-const path = require('path');
-const { sequelize } = require('./models');
-const companyRoutes = require('./routes/companyRoutes');
-const payrollRuleRoutes = require('./routes/payrollRuleRoutes');
-const workLogRoutes = require('./routes/workLogRoutes');
-const authRoutes = require('./routes/authRoutes');
-const workerManagerRoutes = require('./routes/workerManagerRoutes');
-const overtimeRoutes = require('./routes/overtimeRoutes');
-const pendingRequestRoutes = require('./routes/pendingRequestRoutes');
-const exportRoutes = require('./routes/exportRoutes');
-const workerRoutes = require('./routes/workerRoutes');
-const companyAdminRoutes = require('./routes/companyAdminRoutes');
-const adminRoutes = require('./routes/adminRoutes');
-const { authenticateToken, restrictTo } = require('./middleware/auth');
+const express = require("express");
+const cors = require("cors");
+const cookieParser = require("cookie-parser");
+const logger = require("./utils/logger");
+const sequelize = require("./config/database");
+const { networkInterfaces } = require("os");
+const rateLimit = require('express-rate-limit');
+const helmet = require('helmet');
 
-console.log('Environment variables:', {
-  PORT: process.env.PORT,
-  DB_HOST: process.env.DB_HOST,
-  DB_PORT: process.env.DB_PORT,
-});
+// Improved network IP detection with better logging
+function getNetworkIP() {
+  const nets = networkInterfaces();
+  const results = [];
 
+  // Collect all non-internal IPv4 addresses with enhanced logging
+  for (const [name, interfaces] of Object.entries(nets)) {
+    for (const net of interfaces) {
+      if (net.family === "IPv4" && !net.internal) {
+        results.push({
+          name,
+          address: net.address,
+          netmask: net.netmask,
+        });
+        logger.debug(`Found network interface: ${name} - ${net.address}`);
+      }
+    }
+  }
+
+  // Try to find the preferred IP first
+  const preferredIP = results.find(iface => iface.address === "10.1.15.4");
+  if (preferredIP) {
+    logger.info(`Using preferred network IP: ${preferredIP.address}`);
+    return preferredIP.address;
+  }
+
+  // Fallback to any 10.x.x.x address
+  const localNetworkIP = results.find(iface => iface.address.startsWith("10."));
+  if (localNetworkIP) {
+    logger.info(`Using local network IP: ${localNetworkIP.address}`);
+    return localNetworkIP.address;
+  }
+
+  // Final fallback
+  if (results.length > 0) {
+    logger.info(`Using first available network IP: ${results[0].address}`);
+    return results[0].address;
+  }
+
+  logger.warn('No external network interfaces found, falling back to localhost');
+  return "127.0.0.1";
+}
+
+const NETWORK_IP = process.env.NETWORK_IP || getNetworkIP();
 const PORT = process.env.PORT || 3001;
 
+// Initialize Express app
 const app = express();
 
-// Configure CORS
-const allowedOrigins = ['http://localhost:3000', 'http://localhost:3002'];
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      if (!origin) return callback(null, true);
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      } else {
-        return callback(new Error('Not allowed by CORS'));
-      }
-    },
-    credentials: true,
-  })
-);
+// Security middleware
+app.use(helmet());
+app.use(rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 1000, // limit each IP to 1000 requests per windowMs
+  message: 'Too many requests from this IP, please try again later'
+}));
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Enhanced CORS configuration
+const corsOptions = {
+  origin: (origin, callback) => {
+    const allowedOrigins = [
+      "http://localhost:3000",
+      "http://localhost:3002",
+      "http://127.0.0.1:3000",
+      "http://127.0.0.1:3002",
+      `http://${NETWORK_IP}:3000`,
+      `http://${NETWORK_IP}:3002`,
+    ];
+
+    // Allow requests with no origin (like mobile apps, curl, etc)
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      logger.warn(`CORS blocked origin: ${origin}`);
+      callback(new Error('Not allowed by CORS'), false);
+    }
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+  exposedHeaders: ["Content-Disposition"] // For file downloads
+};
+
+app.use(cors(corsOptions));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use(express.static("uploads", {
+  maxAge: '1d', // Cache static files for 1 day
+  setHeaders: (res, path) => {
+    if (path.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-store');
+    }
+  }
+}));
 
-// Debug middleware (sanitize in production)
+// Enhanced request logging middleware
 app.use((req, res, next) => {
-  console.log('Incoming request:', {
-    method: req.method,
-    path: req.path,
-    headers: req.headers,
-    body: req.body,
-    cookies: req.cookies,
+  const start = Date.now();
+  
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    logger.info({
+      method: req.method,
+      path: req.path,
+      status: res.statusCode,
+      duration: `${duration}ms`,
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+      timestamp: new Date().toISOString()
+    });
   });
+
   next();
 });
 
-// Public routes
-app.get('/', (req, res) => {
-  res.send('Labor Management API is running!');
+// Server info endpoint with enhanced security
+app.get("/api/server-info", (req, res) => {
+  res.json({
+    status: "online",
+    apiVersion: "1.0.0",
+    environment: process.env.NODE_ENV || 'development',
+    endpoints: {
+      auth: `/api/auth`,
+      companies: `/api/companies`,
+      workers: `/api/workers`
+    }
+  });
 });
 
-// Mount routes under /api
-app.use('/api/auth', authRoutes);
-app.use('/api/companies', authenticateToken, restrictTo('super_admin'), companyRoutes);
-app.use('/api/workers', workerRoutes);
-app.use('/api/payroll-rules', payrollRuleRoutes);
-app.use('/api/work-logs', authenticateToken, restrictTo('company_admin'), workLogRoutes);
-app.use('/api/worker-managers', workerManagerRoutes);
-app.use('/api/overtime', overtimeRoutes);
-app.use('/api/pending-requests', pendingRequestRoutes);
-app.use('/api/export', exportRoutes);
-app.use('/api', companyAdminRoutes);
-app.use('/api/admin', adminRoutes);
+// Import routes
+const routes = [
+  require("./routes/authRoutes"),
+  require("./routes/companyRoutes"),
+  require("./routes/adminRoutes"),
+  require("./routes/workerManagerRoutes"),
+  require("./routes/workerRoutes"),
+  require("./routes/payrollRuleRoutes"),
+  require("./routes/pendingRequestRoutes")
+];
 
-app.use((req, res, next) => {
-  console.log('Route not found:', req.method, req.path);
-  res.status(404).json({ error: 'Route not found' });
+// Register all routes
+routes.forEach(route => {
+  app.use('/api', route);
 });
 
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'healthy' });
+});
+
+// Enhanced error handling middleware
 app.use((err, req, res, next) => {
-  if (err.name === 'SequelizeUniqueConstraintError') {
-    return res.status(400).json({ error: 'The provided value must be unique' });
-  }
-  console.error('Global error handler:', err);
-  res.status(500).json({ error: 'Internal server error', details: err.message });
+  logger.error({
+    error: err.message,
+    stack: process.env.NODE_ENV === 'development' ? err.stack : undefined,
+    path: req.path,
+    method: req.method
+  });
+
+  res.status(err.status || 500).json({
+    error: process.env.NODE_ENV === 'development' ? err.message : 'An error occurred',
+    code: err.code || 'SERVER_ERROR'
+  });
 });
 
-sequelize
-  .sync()
+// Database connection and server start
+sequelize.authenticate()
   .then(() => {
-    app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
+    logger.info('Database connection established');
+    
+    // Sync models (use { force: true } only in development for resetting DB)
+    return sequelize.sync({ alter: true });
+  })
+  .then(() => {
+    app.listen(PORT, "0.0.0.0", () => {
+      logger.info(`Server running on port ${PORT}`);
+      console.log('\nServer accessible at:');
+      console.log(`- Local:    http://localhost:${PORT}`);
+      console.log(`- Network:  http://${NETWORK_IP}:${PORT}\n`);
+      
+      // Log all available endpoints
+      console.log('Available API Endpoints:');
+      app._router.stack.forEach(middleware => {
+        if (middleware.route) {
+          console.log(`${Object.keys(middleware.route.methods).join(', ').toUpperCase()} ${middleware.route.path}`);
+        }
+      });
     });
   })
-  .catch((err) => {
-    console.error('Unable to connect to the database:', err);
+  .catch(err => {
+    logger.error('Database connection failed', { error: err.message });
+    process.exit(1);
   });
 
 module.exports = app;

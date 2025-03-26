@@ -1,371 +1,536 @@
-import { useState, useEffect } from 'react';
-import { Table, Button, Form, Modal, Badge, Alert, Nav } from 'react-bootstrap';
-import axios from 'axios';
-import { useNavigate } from 'react-router-dom';
+"use client";
+
+import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import { toast } from "./ui/toaster";
+import { apiRequest } from "../utils/axios-config"; // Use apiRequest exclusively
+import Modal from "./ui/modal";
+import Spinner from "./ui/spinner";
+import { Building, Users, Plus, ToggleLeft, ToggleRight, Trash2, ChevronDown, ChevronRight, Eye } from "lucide-react";
 
 const SuperAdminDashboard = () => {
   const [companies, setCompanies] = useState([]);
-  const [admins, setAdmins] = useState([]);
   const [showCompanyModal, setShowCompanyModal] = useState(false);
-  const [showAdminModal, setShowAdminModal] = useState(false);
-  const [newCompany, setNewCompany] = useState({ name: '', adminUsername: '', adminPassword: '' });
-  const [newAdmin, setNewAdmin] = useState({ username: '', password: '', company_id: '' });
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
-  const [currentView, setCurrentView] = useState('home');
-  const [isLoggedIn, setIsLoggedIn] = useState(!!localStorage.getItem('role')); // Check login state
+  const [newCompany, setNewCompany] = useState({ name: "", adminUsername: "", adminPassword: "" });
+  const [expandedCompanies, setExpandedCompanies] = useState({});
+  const [companyAdmins, setCompanyAdmins] = useState({});
+  const [workerManagers, setWorkerManagers] = useState({});
+  const [isLoggedIn, setIsLoggedIn] = useState(!!localStorage.getItem("role"));
+  const [isLoading, setIsLoading] = useState(false);
+  const [showAdminDetailsModal, setShowAdminDetailsModal] = useState(false);
+  const [selectedAdmin, setSelectedAdmin] = useState(null);
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (!isLoggedIn) navigate('/login');
-    if (currentView === 'home') fetchCompanies();
-    if (currentView === 'admins') fetchAdmins();
-  }, [currentView, isLoggedIn, navigate]);
-
-  useEffect(() => {
-    if (success) {
-      const timer = setTimeout(() => setSuccess(''), 3000);
-      return () => clearTimeout(timer);
-    }
-  }, [success]);
+    if (!isLoggedIn) navigate("/login");
+    fetchCompanies();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoggedIn, navigate]);
 
   const fetchCompanies = async () => {
+    setIsLoading(true);
     try {
-      const response = await axios.get('http://localhost:3001/api/companies', { withCredentials: true });
+      const response = await apiRequest("get", "/companies");
       setCompanies(response.data);
+
+      const expandedState = {};
+      response.data.forEach((company) => {
+        expandedState[company.id] = false;
+      });
+      setExpandedCompanies(expandedState);
+
+      fetchAllCompanyAdmins();
     } catch (err) {
-      setError(err.response?.data?.message || 'Failed to fetch companies');
+      toast.error(err.response?.data?.message || "Failed to fetch companies");
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  const fetchAdmins = async () => {
+  const fetchAllCompanyAdmins = async () => {
     try {
-      const response = await axios.get('http://localhost:3001/api/admin/company-admins', { withCredentials: true });
-      setAdmins(response.data);
+      const response = await apiRequest("get", "/admin/company-admins");
+      const adminsByCompany = {};
+      response.data.forEach((admin) => {
+        if (!adminsByCompany[admin.company_id]) {
+          adminsByCompany[admin.company_id] = [];
+        }
+        adminsByCompany[admin.company_id].push(admin);
+      });
+      setCompanyAdmins(adminsByCompany);
     } catch (err) {
-      setError(err.response?.data?.message || 'Failed to fetch company admins');
+      toast.error("Failed to fetch company admins");
+    }
+  };
+
+  const fetchWorkerManagers = async (companyId) => {
+    try {
+      const response = await apiRequest("get", `/companies/${companyId}/worker-managers`);
+      setWorkerManagers((prev) => ({
+        ...prev,
+        [companyId]: response.data,
+      }));
+    } catch (err) {
+      toast.error(`Failed to fetch worker managers for company ${companyId}`);
     }
   };
 
   const handleCreateCompany = async (e) => {
     e.preventDefault();
+    setIsLoading(true);
     try {
-      const response = await axios.post('http://localhost:3001/api/companies', newCompany, { withCredentials: true });
+      await apiRequest("post", "/companies", newCompany);
       setShowCompanyModal(false);
-      setNewCompany({ name: '', adminUsername: '', adminPassword: '' });
+      setNewCompany({ name: "", adminUsername: "", adminPassword: "" });
       fetchCompanies();
-      setSuccess('Company and admin created successfully');
+      toast.success("Company and admin created successfully");
     } catch (err) {
-      console.error('Create company error:', err.response?.data || err);
-      setError(err.response?.data?.message || err.message || 'Failed to create company');
+      console.error("Create company error:", err.response?.data || err);
+      toast.error(err.response?.data?.message || err.message || "Failed to create company");
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  const handleCreateAdmin = async (e) => {
-    e.preventDefault();
+  const handleCompanyStatusToggle = async (companyId, currentStatus) => {
+    setIsLoading(true);
     try {
-      const response = await axios.post('http://localhost:3001/api/admin/company-admins', newAdmin, { withCredentials: true });
-      setShowAdminModal(false);
-      setNewAdmin({ username: '', password: '', company_id: '' });
-      fetchAdmins();
-      setSuccess('Company Admin created successfully');
-    } catch (err) {
-      console.error('Create admin error:', err.response?.data || err);
-      setError(err.response?.data?.message || err.message || 'Failed to create admin');
-    }
-  };
-
-  const handleStatusToggle = async (companyId, currentStatus) => {
-    try {
-      await axios.patch(
-        `http://localhost:3001/api/companies/${companyId}/status`,
-        { status: currentStatus === 'active' ? 'inactive' : 'active' },
-        { withCredentials: true }
-      );
+      const newStatus = currentStatus === "active" ? "inactive" : "active";
+      await apiRequest("patch", `/companies/${companyId}/status`, { status: newStatus });
       fetchCompanies();
-      setSuccess(`Company ${currentStatus === 'active' ? 'deactivated' : 'activated'} successfully`);
+      if (newStatus === "active") {
+        toast.success(`Company activated successfully. Company admins have also been activated.`);
+      } else {
+        toast.success(`Company deactivated successfully. Company admins and worker managers have also been deactivated.`);
+      }
     } catch (err) {
-      setError(err.response?.data?.message || 'Failed to update company status');
+      toast.error(err.response?.data?.message || "Failed to update company status");
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const handleAdminStatusToggle = async (adminId, currentStatus) => {
+    setIsLoading(true);
     try {
-      const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
-      await axios.patch(
-        `http://localhost:3001/api/admin/company-admins/${adminId}/status`,
-        { status: newStatus },
-        { withCredentials: true }
-      );
-      fetchAdmins();
-      setSuccess(`Admin ${newStatus} successfully`);
+      const newStatus = currentStatus === "active" ? "inactive" : "active";
+      await apiRequest("patch", `/admin/company-admins/${adminId}/status`, { status: newStatus });
+      fetchAllCompanyAdmins();
+      toast.success(`Admin ${newStatus === "active" ? "activated" : "deactivated"} successfully`);
     } catch (err) {
-      setError(err.response?.data?.message || 'Failed to update admin status');
+      toast.error(err.response?.data?.message || "Failed to update admin status");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleWorkerManagerStatusToggle = async (managerId, currentStatus) => {
+    setIsLoading(true);
+    try {
+      const newStatus = currentStatus === "active" ? "inactive" : "active";
+      await apiRequest("patch", `/worker-managers/${managerId}/status`, { status: newStatus });
+      const manager = Object.entries(workerManagers).flatMap(([companyId, managers]) =>
+        managers.find((m) => m.id === managerId)
+      )[0];
+      if (manager) {
+        fetchWorkerManagers(manager.company_id);
+      }
+      toast.success(`Worker Manager ${newStatus === "active" ? "activated" : "deactivated"} successfully`);
+    } catch (err) {
+      toast.error(err.response?.data?.message || "Failed to update worker manager status");
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const handleDeleteCompany = async (companyId) => {
-    if (window.confirm('Are you sure you want to delete this company?')) {
+    if (
+      window.confirm(
+        "Are you sure you want to delete this company? This will also delete all associated admins and worker managers."
+      )
+    ) {
+      setIsLoading(true);
       try {
-        await axios.delete(`http://localhost:3001/api/companies/${companyId}`, { withCredentials: true });
+        await apiRequest("delete", `/companies/${companyId}`);
         fetchCompanies();
-        setSuccess('Company deleted successfully');
+        toast.success("Company deleted successfully");
       } catch (err) {
-        console.error('Error deleting company:', err.message || err);
-        setError(err.response?.data?.message || 'Failed to delete company');
+        console.error("Error deleting company:", err.message || err);
+        toast.error(err.response?.data?.message || "Failed to delete company");
+      } finally {
+        setIsLoading(false);
       }
     }
   };
 
   const handleLogout = async () => {
     try {
-      await axios.post('http://localhost:3001/api/auth/logout', {}, { withCredentials: true });
+      await apiRequest("post", "/auth/logout", {});
       localStorage.clear();
       setIsLoggedIn(false);
-      navigate('/login');
+      navigate("/login");
     } catch (err) {
-      console.error('Logout error:', err);
+      console.error("Logout error:", err);
       localStorage.clear();
       setIsLoggedIn(false);
-      navigate('/login');
+      navigate("/login");
     }
   };
 
-  const renderHeader = () => {
-    return (
+  const toggleCompanyExpand = (companyId) => {
+    setExpandedCompanies((prev) => {
+      const newState = {
+        ...prev,
+        [companyId]: !prev[companyId],
+      };
+      if (newState[companyId]) {
+        fetchWorkerManagers(companyId);
+      }
+      return newState;
+    });
+  };
+
+  const viewAdminDetails = (admin) => {
+    setSelectedAdmin(admin);
+    setShowAdminDetailsModal(true);
+  };
+
+  if (!isLoggedIn) return null;
+
+  return (
+    <div className="container mt-4 fade-in">
       <div className="dashboard-header">
-        <h2 className="dashboard-title">
-          {currentView === 'home' ? 'Super Admin Dashboard' : 'Manage Company Admins'}
-        </h2>
+        <h2 className="dashboard-title">Super Admin Dashboard</h2>
         <div className="d-flex flex-md-row flex-column">
-          {currentView !== 'home' && (
-            <Button variant="secondary" className="me-md-2 mb-2 mb-md-0" onClick={() => setCurrentView('home')}>
-              Back to Dashboard
-            </Button>
-          )}
-          {currentView === 'home' && (
-            <>
-              <Button variant="primary" onClick={() => setShowCompanyModal(true)} className="me-md-2 mb-2 mb-md-0">
-                Create New Company
-              </Button>
-              {isLoggedIn && (
-                <Button variant="secondary" onClick={handleLogout}>
-                  Logout
-                </Button>
-              )}
-            </>
-          )}
-          {currentView === 'admins' && (
-            <Button variant="primary" onClick={() => setShowAdminModal(true)}>
-              Add Company Admin
-            </Button>
+          <button className="btn btn-primary me-md-2 mb-2 mb-md-0" onClick={() => setShowCompanyModal(true)}>
+            <Plus size={16} className="me-1" /> Create New Company
+          </button>
+          {isLoggedIn && (
+            <button className="btn btn-secondary" onClick={handleLogout}>
+              Logout
+            </button>
           )}
         </div>
       </div>
-    );
-  };
 
-  if (!isLoggedIn) return null; // Prevent rendering if not logged in
-
-  return (
-    <div className="container mt-4">
-      {error && <Alert variant="danger">{error}</Alert>}
-      {success && <Alert variant="success">{success}</Alert>}
-
-      {renderHeader()}
-
-      <Nav variant="tabs" className="mb-3">
-        <Nav.Item>
-          <Nav.Link eventKey="home" active={currentView === 'home'} onClick={() => setCurrentView('home')}>
-            Companies
-          </Nav.Link>
-        </Nav.Item>
-        <Nav.Item>
-          <Nav.Link eventKey="admins" active={currentView === 'admins'} onClick={() => setCurrentView('admins')}>
-            Company Admins
-          </Nav.Link>
-        </Nav.Item>
-      </Nav>
-
-      {currentView === 'home' && (
-        <div className="table-responsive">
-          <Table striped bordered hover className="company-table">
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Company Name</th>
-                <th>Status</th>
-                <th>Created At</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {companies.map((company) => (
-                <tr key={company.id}>
-                  <td>{company.id}</td>
-                  <td>{company.name}</td>
-                  <td>
-                    <Badge className={company.status === 'active' ? 'status-active' : 'status-inactive'}>
-                      {company.status}
-                    </Badge>
-                  </td>
-                  <td>{new Date(company.created_at).toLocaleDateString()}</td>
-                  <td>
-                    {company.id === 1 ? (
-                      <Button variant="warning" disabled title="Super Admin Company cannot be deactivated">
-                        Deactivate
-                      </Button>
-                    ) : (
-                      <Button
-                        variant={company.status === 'active' ? 'warning' : 'success'}
-                        onClick={() => handleStatusToggle(company.id, company.status)}
-                        className="btn-action"
-                      >
-                        {company.status === 'active' ? 'Deactivate' : 'Activate'}
-                      </Button>
-                    )}
-                    {company.id !== 1 && (
-                      <Button
-                        variant="danger"
-                        className="btn-action ms-md-2"
-                        onClick={() => handleDeleteCompany(company.id)}
-                      >
-                        Delete
-                      </Button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </Table>
+      <div className="card mb-4">
+        <div className="card-header d-flex justify-content-between align-items-center">
+          <h3 className="mb-0">
+            <Building size={18} className="me-2" /> Companies
+          </h3>
+          <span className="badge badge-primary">{companies.length} Companies</span>
         </div>
-      )}
+        <div className="card-body p-0">
+          {isLoading ? (
+            <div className="text-center py-5">
+              <Spinner />
+              <p className="mt-2">Loading companies...</p>
+            </div>
+          ) : (
+            <div className="table-responsive">
+              <table className="table mb-0">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Company Name</th>
+                    <th>Status</th>
+                    <th>Created At</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {companies.map((company) => (
+                    <>
+                      <tr key={company.id} className={expandedCompanies[company.id] ? "bg-light" : ""}>
+                        <td>{company.id}</td>
+                        <td>
+                          <button
+                            className="btn btn-link text-decoration-none p-0 d-flex align-items-center"
+                            onClick={() => toggleCompanyExpand(company.id)}
+                          >
+                            {expandedCompanies[company.id] ? (
+                              <ChevronDown size={16} className="me-1" />
+                            ) : (
+                              <ChevronRight size={16} className="me-1" />
+                            )}
+                            {company.name}
+                          </button>
+                        </td>
+                        <td>
+                          <span className={`badge ${company.status === "active" ? "badge-active" : "badge-inactive"}`}>
+                            {company.status}
+                          </span>
+                        </td>
+                        <td>{new Date(company.created_at).toLocaleDateString()}</td>
+                        <td>
+                          {company.id === 1 ? (
+                            <button
+                              className="btn btn-warning btn-sm"
+                              disabled
+                              title="Super Admin Company cannot be deactivated"
+                            >
+                              <ToggleLeft size={14} className="me-1" /> Deactivate
+                            </button>
+                          ) : (
+                            <button
+                              className={`btn ${company.status === "active" ? "btn-warning" : "btn-success"} btn-sm btn-action`}
+                              onClick={() => handleCompanyStatusToggle(company.id, company.status)}
+                            >
+                              {company.status === "active" ? (
+                                <>
+                                  <ToggleLeft size={14} className="me-1" /> Deactivate
+                                </>
+                              ) : (
+                                <>
+                                  <ToggleRight size={14} className="me-1" /> Activate
+                                </>
+                              )}
+                            </button>
+                          )}
+                          {company.id !== 1 && (
+                            <button
+                              className="btn btn-danger btn-sm btn-action"
+                              onClick={() => handleDeleteCompany(company.id)}
+                            >
+                              <Trash2 size={14} className="me-1" /> Delete
+                            </button>
+                          )}
+                        </td>
+                      </tr>
 
-      {currentView === 'admins' && (
-        <div className="table-responsive">
-          <Table striped bordered hover className="company-table">
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Username</th>
-                <th>Company ID</th>
-                <th>Status</th>
-                <th>Created At</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {admins.map((admin) => (
-                <tr key={admin.id}>
-                  <td>{admin.id}</td>
-                  <td>{admin.username}</td>
-                  <td>{admin.company_id}</td>
-                  <td>
-                    <Badge className={admin.status === 'active' ? 'status-active' : 'status-inactive'}>
-                      {admin.status}
-                    </Badge>
-                  </td>
-                  <td>{new Date(admin.created_at).toLocaleDateString()}</td>
-                  <td>
-                    <Button
-                      variant={admin.status === 'active' ? 'warning' : 'success'}
-                      onClick={() => handleAdminStatusToggle(admin.id, admin.status)}
-                      className="btn-action"
-                    >
-                      {admin.status === 'active' ? 'Deactivate' : 'Activate'}
-                    </Button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </Table>
+                      {expandedCompanies[company.id] && (
+                        <>
+                          <tr className="bg-light">
+                            <td colSpan={5} className="border-0 pt-0">
+                              <div className="ps-4 mb-2">
+                                <h5 className="mb-2">
+                                  <Users size={16} className="me-1" /> Company Admin
+                                </h5>
+                                <div className="table-responsive">
+                                  <table className="table table-sm border">
+                                    <thead>
+                                      <tr>
+                                        <th>ID</th>
+                                        <th>Username</th>
+                                        <th>Status</th>
+                                        <th>Actions</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {companyAdmins[company.id]?.map((admin) => (
+                                        <tr key={admin.id}>
+                                          <td>{admin.id}</td>
+                                          <td>{admin.username}</td>
+                                          <td>
+                                            <span
+                                              className={`badge ${admin.status === "active" ? "badge-active" : "badge-inactive"}`}
+                                            >
+                                              {admin.status}
+                                            </span>
+                                          </td>
+                                          <td>
+                                            <button
+                                              className="btn btn-info btn-sm btn-action"
+                                              onClick={() => viewAdminDetails(admin)}
+                                            >
+                                              <Eye size={14} className="me-1" /> Details
+                                            </button>
+                                            <button
+                                              className={`btn ${admin.status === "active" ? "btn-warning" : "btn-success"} btn-sm btn-action`}
+                                              onClick={() => handleAdminStatusToggle(admin.id, admin.status)}
+                                            >
+                                              {admin.status === "active" ? (
+                                                <>
+                                                  <ToggleLeft size={14} className="me-1" /> Deactivate
+                                                </>
+                                              ) : (
+                                                <>
+                                                  <ToggleRight size={14} className="me-1" /> Activate
+                                                </>
+                                              )}
+                                            </button>
+                                          </td>
+                                        </tr>
+                                      ))}
+                                      {(!companyAdmins[company.id] || companyAdmins[company.id].length === 0) && (
+                                        <tr>
+                                          <td colSpan={4} className="text-center">
+                                            No company admin found
+                                          </td>
+                                        </tr>
+                                      )}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+
+                              <div className="ps-4 mb-3">
+                                <h5 className="mb-2">
+                                  <Users size={16} className="me-1" /> Worker Managers
+                                </h5>
+                                <div className="table-responsive">
+                                  <table className="table table-sm border">
+                                    <thead>
+                                      <tr>
+                                        <th>ID</th>
+                                        <th>Username</th>
+                                        <th>Status</th>
+                                        <th>Actions</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {workerManagers[company.id]?.map((manager) => (
+                                        <tr key={manager.id}>
+                                          <td>{manager.id}</td>
+                                          <td>{manager.username}</td>
+                                          <td>
+                                            <span
+                                              className={`badge ${manager.status === "active" ? "badge-active" : "badge-inactive"}`}
+                                            >
+                                              {manager.status}
+                                            </span>
+                                          </td>
+                                          <td>
+                                            <button
+                                              className={`btn ${manager.status === "active" ? "btn-warning" : "btn-success"} btn-sm btn-action`}
+                                              onClick={() =>
+                                                handleWorkerManagerStatusToggle(manager.id, manager.status)
+                                              }
+                                            >
+                                              {manager.status === "active" ? (
+                                                <>
+                                                  <ToggleLeft size={14} className="me-1" /> Deactivate
+                                                </>
+                                              ) : (
+                                                <>
+                                                  <ToggleRight size={14} className="me-1" /> Activate
+                                                </>
+                                              )}
+                                            </button>
+                                          </td>
+                                        </tr>
+                                      ))}
+                                      {(!workerManagers[company.id] || workerManagers[company.id].length === 0) && (
+                                        <tr>
+                                          <td colSpan={4} className="text-center">
+                                            No worker managers found
+                                          </td>
+                                        </tr>
+                                      )}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        </>
+                      )}
+                    </>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
-      )}
+      </div>
 
-      <Modal show={showCompanyModal} onHide={() => setShowCompanyModal(false)} dialogClassName="modal-form">
-        <Modal.Header closeButton>
-          <Modal.Title>Create New Company</Modal.Title>
-        </Modal.Header>
-        <Modal.Body>
-          <Form onSubmit={handleCreateCompany}>
-            <Form.Group className="form-group">
-              <Form.Label className="form-label">Company Name</Form.Label>
-              <Form.Control
-                type="text"
-                value={newCompany.name}
-                onChange={(e) => setNewCompany({ ...newCompany, name: e.target.value })}
-                required
-                className="form-control"
-              />
-            </Form.Group>
-            <Form.Group className="form-group">
-              <Form.Label className="form-label">Admin Username</Form.Label>
-              <Form.Control
-                type="text"
-                value={newCompany.adminUsername}
-                onChange={(e) => setNewCompany({ ...newCompany, adminUsername: e.target.value })}
-                required
-                className="form-control"
-              />
-            </Form.Group>
-            <Form.Group className="form-group">
-              <Form.Label className="form-label">Admin Password</Form.Label>
-              <Form.Control
-                type="password"
-                value={newCompany.adminPassword}
-                onChange={(e) => setNewCompany({ ...newCompany, adminPassword: e.target.value })}
-                required
-                className="form-control"
-              />
-            </Form.Group>
-            <Button variant="primary" type="submit" className="btn-create">Create Company</Button>
-          </Form>
-        </Modal.Body>
+      <Modal isOpen={showCompanyModal} onClose={() => setShowCompanyModal(false)} title="Create New Company">
+        <form onSubmit={handleCreateCompany}>
+          <div className="form-group">
+            <label className="form-label">Company Name</label>
+            <input
+              type="text"
+              value={newCompany.name}
+              onChange={(e) => setNewCompany({ ...newCompany, name: e.target.value })}
+              required
+              className="form-control"
+            />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Admin Username</label>
+            <input
+              type="text"
+              value={newCompany.adminUsername}
+              onChange={(e) => setNewCompany({ ...newCompany, adminUsername: e.target.value })}
+              required
+              className="form-control"
+            />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Admin Password</label>
+            <input
+              type="password"
+              value={newCompany.adminPassword}
+              onChange={(e) => setNewCompany({ ...newCompany, adminPassword: e.target.value })}
+              required
+              className="form-control"
+            />
+          </div>
+          <div className="d-flex justify-content-end mt-3">
+            <button type="button" className="btn btn-secondary me-2" onClick={() => setShowCompanyModal(false)}>
+              Cancel
+            </button>
+            <button type="submit" className="btn btn-primary" disabled={isLoading}>
+              {isLoading ? (
+                <>
+                  <Spinner size="small" className="me-2" />
+                  Creating...
+                </>
+              ) : (
+                "Create Company"
+              )}
+            </button>
+          </div>
+        </form>
       </Modal>
 
-      <Modal show={showAdminModal} onHide={() => setShowAdminModal(false)} dialogClassName="modal-form">
-        <Modal.Header closeButton>
-          <Modal.Title>Add Company Admin</Modal.Title>
-        </Modal.Header>
-        <Modal.Body>
-          <Form onSubmit={handleCreateAdmin}>
-            <Form.Group className="form-group">
-              <Form.Label className="form-label">Username</Form.Label>
-              <Form.Control
-                type="text"
-                value={newAdmin.username}
-                onChange={(e) => setNewAdmin({ ...newAdmin, username: e.target.value })}
-                required
-                className="form-control"
-              />
-            </Form.Group>
-            <Form.Group className="form-group">
-              <Form.Label className="form-label">Password</Form.Label>
-              <Form.Control
-                type="password"
-                value={newAdmin.password}
-                onChange={(e) => setNewAdmin({ ...newAdmin, password: e.target.value })}
-                required
-                className="form-control"
-              />
-            </Form.Group>
-            <Form.Group className="form-group">
-              <Form.Label className="form-label">Company</Form.Label>
-              <Form.Select
-                value={newAdmin.company_id}
-                onChange={(e) => setNewAdmin({ ...newAdmin, company_id: e.target.value })}
-                required
-                className="form-control"
-              >
-                <option value="">Select Company</option>
-                {companies.map((company) => (
-                  <option key={company.id} value={company.id}>{company.name}</option>
-                ))}
-              </Form.Select>
-            </Form.Group>
-            <Button variant="primary" type="submit" className="btn-create">Create Admin</Button>
-          </Form>
-        </Modal.Body>
+      <Modal
+        isOpen={showAdminDetailsModal}
+        onClose={() => setShowAdminDetailsModal(false)}
+        title="Company Admin Details"
+      >
+        {selectedAdmin && (
+          <div>
+            <div className="mb-3">
+              <h6>Basic Information</h6>
+              <table className="table table-bordered">
+                <tbody>
+                  <tr>
+                    <th>ID</th>
+                    <td>{selectedAdmin.id}</td>
+                  </tr>
+                  <tr>
+                    <th>Username</th>
+                    <td>{selectedAdmin.username}</td>
+                  </tr>
+                  <tr>
+                    <th>Status</th>
+                    <td>
+                      <span
+                        className={`badge ${selectedAdmin.status === "active" ? "badge-active" : "badge-inactive"}`}
+                      >
+                        {selectedAdmin.status}
+                      </span>
+                    </td>
+                  </tr>
+                  <tr>
+                    <th>Company ID</th>
+                    <td>{selectedAdmin.company_id}</td>
+                  </tr>
+                  <tr>
+                    <th>Created At</th>
+                    <td>{new Date(selectedAdmin.created_at).toLocaleString()}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div className="d-flex justify-content-end">
+              <button className="btn btn-secondary" onClick={() => setShowAdminDetailsModal(false)}>
+                Close
+              </button>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   );

@@ -1,5 +1,5 @@
-const bcrypt = require('bcrypt');
-
-const password = 'admin123';
-const hashedPassword = bcrypt.hashSync(password, 10); // 10 is the salt rounds
-console.log(hashedPassword);
+const bcrypt = require("bcrypt");
+bcrypt.hash("admin123", 10, (err, hash) => {
+  if (err) console.error(err);
+  console.log("New hash for admin123:", hash);
+});

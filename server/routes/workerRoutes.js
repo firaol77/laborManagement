@@ -1,265 +1,257 @@
-const express = require('express');
-const path = require('path');
-const multer = require('multer');
-const { Sequelize } = require('sequelize');
-const { LaborWorker, PendingRequest, WorkLog, PayrollRule } = require('../models');
-const { authenticateToken, restrictTo } = require('../middleware/auth');
-const db = require('../config/database');
-const fs = require('fs').promises;
+const express = require("express")
+const router = express.Router()
+const multer = require("multer")
+const path = require("path")
+const fs = require("fs")
+const { authenticateToken, restrictTo } = require("../middleware/auth")
+const { Worker, Company, CompanyAdmin } = require("../models")
 
-const router = express.Router();
-
-const uploadDir = path.join(__dirname, '../uploads');
-
+// Configure multer for file uploads
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadDir),
-  filename: (req, file, cb) => {
-    const timestamp = Date.now();
-    cb(null, `photo-${timestamp}-${file.originalname}`);
+  destination: (req, file, cb) => {
+    const uploadDir = path.join(__dirname, "../uploads")
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true })
+    }
+    cb(null, uploadDir)
   },
-});
-const upload = multer({ storage });
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9)
+    const ext = path.extname(file.originalname)
+    cb(null, "worker-" + uniqueSuffix + ext)
+  },
+})
+
+const upload = multer({ storage })
+
+// Get all workers
+router.get("/", authenticateToken, async (req, res) => {
+  try {
+    let workers
+
+    if (req.user.role === "super_admin") {
+      // Super admin can see all workers
+      workers = await Worker.findAll()
+    } else {
+      // Company admin and worker manager can only see workers from their company
+      workers = await Worker.findAll({
+        where: { company_id: req.user.company_id },
+      })
+    }
+
+    res.json(workers)
+  } catch (err) {
+    console.error("Error fetching workers:", err)
+    res.status(500).json({ message: "Server error" })
+  }
+})
 
 // Create a new worker
-router.post('/', authenticateToken, restrictTo('company_admin'), upload.single('photo'), async (req, res) => {
-  const { name, bankName, accountNumber } = req.body;
+router.post("/", authenticateToken, restrictTo("company_admin"), upload.single("photo"), async (req, res) => {
   try {
-    const photoUrl = req.file ? `/uploads/${req.file.filename}` : null;
-    const worker = await LaborWorker.create({
+    const { name, bankName, accountNumber, regdate } = req.body
+
+    const worker = await Worker.create({
       name,
-      bankname: bankName,
-      accountnumber: accountNumber,
-      photo_url: photoUrl,
+      bank_name: bankName,
+      account_number: accountNumber,
+      registration_date: regdate || new Date().toISOString().split("T")[0],
+      photo_url: req.file ? `/uploads/${req.file.filename}` : null,
       company_id: req.user.company_id,
-      status: 'active',
-    });
-    res.status(201).json(worker);
-  } catch (error) {
-    console.error('Error creating worker:', error);
-    if (req.file) {
-      try {
-        await fs.unlink(path.join(uploadDir, req.file.filename));
-      } catch (unlinkError) {
-        console.error('Failed to delete uploaded file:', unlinkError);
+      status: "active",
+      overtime_hours: 0,
+    })
+
+    res.status(201).json(worker)
+  } catch (err) {
+    console.error("Error creating worker:", err)
+    res.status(500).json({ message: "Server error" })
+  }
+})
+
+// Update worker status
+router.patch("/:id/status", authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params
+    const { status } = req.body
+
+    const worker = await Worker.findByPk(id)
+    if (!worker) {
+      return res.status(404).json({ message: "Worker not found" })
+    }
+
+    // Check if user has permission to update this worker
+    if (req.user.role !== "super_admin" && worker.company_id !== req.user.company_id) {
+      return res.status(403).json({ message: "You can only update workers from your company" })
+    }
+
+    worker.status = status
+    await worker.save()
+
+    res.json({ message: `Worker status updated to ${status}` })
+  } catch (err) {
+    console.error("Error updating worker status:", err)
+    res.status(500).json({ message: "Server error" })
+  }
+})
+
+// Delete worker
+router.delete("/:id", authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params
+
+    const worker = await Worker.findByPk(id)
+    if (!worker) {
+      return res.status(404).json({ message: "Worker not found" })
+    }
+
+    // Check if user has permission to delete this worker
+    if (req.user.role !== "super_admin" && worker.company_id !== req.user.company_id) {
+      return res.status(403).json({ message: "You can only delete workers from your company" })
+    }
+
+    // Delete worker photo if exists
+    if (worker.photo_url) {
+      const photoPath = path.join(__dirname, "..", worker.photo_url)
+      if (fs.existsSync(photoPath)) {
+        fs.unlinkSync(photoPath)
       }
     }
-    res.status(500).json({ error: 'Failed to create worker' });
-  }
-});
 
-// Fetch all workers for the authenticated user's company
-router.get('/', authenticateToken, restrictTo('company_admin', 'worker_manager'), async (req, res) => {
-  try {
-    const workers = await LaborWorker.findAll({
-      where: { company_id: req.user.company_id },
-      attributes: ['id', 'name', 'status', 'overtime_hours', 'photo_url', 'bankname', 'accountnumber'],
-    });
+    await worker.destroy()
 
-    const payrollRules = await PayrollRule.findOne({ where: { company_id: req.user.company_id } });
-    const workersWithRates = workers.map(worker => ({
-      ...worker.toJSON(),
-      bank_name: worker.bankname, // Add for frontend
-      account_number: worker.accountnumber, // Add for frontend
-      daily_rate: payrollRules ? Number(payrollRules.daily_rate) || 0 : 0, // Ensure number
-      overtime_rate: payrollRules ? Number(payrollRules.overtime_rate) || 0 : 0, // Ensure number
-    }));
-
-    res.json(workersWithRates);
+    res.json({ message: "Worker deleted successfully" })
   } catch (err) {
-    console.error('Error fetching workers:', err);
-    res.status(500).json({ error: 'Failed to fetch workers', details: err.message });
+    console.error("Error deleting worker:", err)
+    res.status(500).json({ message: "Server error" })
   }
-});
+})
 
-// Toggle worker status
-router.patch('/:id/status', authenticateToken, restrictTo('company_admin'), async (req, res) => {
+// Apply overtime to workers
+router.post("/overtime", authenticateToken, restrictTo("company_admin"), async (req, res) => {
   try {
-    const { status } = req.body;
-    if (!['active', 'inactive'].includes(status)) {
-      return res.status(400).json({ error: 'Invalid status' });
-    }
-    const worker = await LaborWorker.findOne({
-      where: { id: req.params.id, company_id: req.user.company_id },
-    });
-    if (!worker) return res.status(404).json({ error: 'Worker not found' });
-    await worker.update({ status });
-    res.json({ message: `Worker ${status} successfully` });
-  } catch (err) {
-    console.error('Error updating status:', err);
-    res.status(500).json({ error: 'Failed to update status', details: err.message });
-  }
-});
+    const { workerId, hours, allWorkers, deduct } = req.body
 
-// Delete a worker
-router.delete('/:id', authenticateToken, restrictTo('company_admin'), async (req, res) => {
-  const transaction = await db.transaction();
-  try {
-    const worker = await LaborWorker.findOne({
-      where: { id: req.params.id, company_id: req.user.company_id },
-    });
-    if (!worker) {
-      await transaction.rollback();
-      return res.status(404).json({ error: 'Worker not found' });
-    }
+    if (allWorkers) {
+      // Apply overtime to all workers in the company
+      const workers = await Worker.findAll({
+        where: {
+          company_id: req.user.company_id,
+          status: "active",
+        },
+      })
 
-    await WorkLog.destroy({ where: { worker_id: req.params.id }, transaction });
-    await PendingRequest.destroy({ where: { worker_id: req.params.id }, transaction });
-    await worker.destroy({ transaction });
+      for (const worker of workers) {
+        const currentHours = Number.parseFloat(worker.overtime_hours || 0)
+        const newHours = deduct
+          ? Math.max(0, currentHours - Number.parseFloat(hours))
+          : currentHours + Number.parseFloat(hours)
 
-    await transaction.commit();
-    res.json({ message: 'Worker and related data deleted successfully' });
-  } catch (err) {
-    await transaction.rollback();
-    console.error('Delete worker error:', err);
-    if (err.name === 'SequelizeForeignKeyConstraintError') {
-      res.status(400).json({ error: 'Cannot delete worker due to existing references' });
+        worker.overtime_hours = newHours
+        await worker.save()
+      }
+
+      res.json({
+        message: deduct
+          ? `Deducted ${hours} overtime hours from all workers`
+          : `Added ${hours} overtime hours to all workers`,
+      })
     } else {
-      res.status(500).json({ error: 'Failed to delete worker', details: err.message });
+      // Apply overtime to a specific worker
+      const worker = await Worker.findByPk(workerId)
+
+      if (!worker) {
+        return res.status(404).json({ message: "Worker not found" })
+      }
+
+      if (worker.company_id !== req.user.company_id) {
+        return res.status(403).json({ message: "You can only update workers from your company" })
+      }
+
+      const currentHours = Number.parseFloat(worker.overtime_hours || 0)
+      const newHours = deduct
+        ? Math.max(0, currentHours - Number.parseFloat(hours))
+        : currentHours + Number.parseFloat(hours)
+
+      worker.overtime_hours = newHours
+      await worker.save()
+
+      res.json({
+        message: deduct
+          ? `Deducted ${hours} overtime hours from worker ${worker.name}`
+          : `Added ${hours} overtime hours to worker ${worker.name}`,
+      })
     }
+  } catch (err) {
+    console.error("Error applying overtime:", err)
+    res.status(500).json({ message: "Server error" })
   }
-});
+})
 
-// Calculate payroll for active workers
-router.get('/payroll', authenticateToken, restrictTo('company_admin', 'worker_manager'), async (req, res) => {
+// Calculate payroll for a date range
+router.get("/payroll", authenticateToken, async (req, res) => {
   try {
-    const { startDate, endDate } = req.query;
+    const { startDate, endDate } = req.query
+
     if (!startDate || !endDate) {
-      return res.status(400).json({ error: 'Start and end dates are required' });
+      return res.status(400).json({ message: "Start date and end date are required" })
     }
 
-    const workers = await LaborWorker.findAll({
-      where: { company_id: req.user.company_id, status: 'active' },
-      include: [{
-        model: WorkLog,
-        as: 'workLogs',
-        where: { date: { [Sequelize.Op.between]: [startDate, endDate] } },
-        required: false,
-      }],
-    });
-
-    const payrollRules = await PayrollRule.findOne({ where: { company_id: req.user.company_id } });
-    if (!payrollRules) {
-      return res.status(400).json({ error: 'Payroll rules not set for this company' });
+    // Get workers for the company
+    let workers
+    if (req.user.role === "super_admin") {
+      workers = await Worker.findAll()
+    } else {
+      workers = await Worker.findAll({
+        where: { company_id: req.user.company_id },
+      })
     }
 
-    const payroll = workers.map(worker => {
-      const workLogs = worker.workLogs || [];
-      const daysWorked = [...new Set(workLogs.map(log => log.date.toISOString().split('T')[0]))].length;
-      const totalHoursWorked = workLogs.reduce((sum, log) => sum + (log.hours_worked || 0), 0);
-      const regularHours = Math.min(totalHoursWorked, daysWorked * payrollRules.standard_working_hours);
-      const overtimeHours = Math.max(totalHoursWorked - regularHours, 0) + (Number(worker.overtime_hours) || 0);
-      const dailyPay = payrollRules.daily_rate * daysWorked;
-      const overtimePay = payrollRules.overtime_rate * overtimeHours;
-      const totalSalary = dailyPay + overtimePay;
+    // Get payroll rules
+    const company = await Company.findByPk(req.user.company_id)
+    const payrollRules = {
+      standard_working_hours: 8,
+      daily_rate: company?.daily_rate || 400,
+      overtime_rate: company?.overtime_rate || 100,
+    }
+
+    // Calculate days between start and end dates (inclusive)
+    const start = new Date(startDate)
+    const end = new Date(endDate)
+    const daysDiff = Math.floor((end - start) / (24 * 60 * 60 * 1000)) + 1
+
+    // Calculate payroll for each worker
+    const payrollData = workers.map((worker) => {
+      // Only count active workers
+      const isActive = worker.status === "active"
+      const daysWorked = isActive ? daysDiff : 0
+      const regularHours = daysWorked * payrollRules.standard_working_hours
+      const overtimeHours = Number.parseFloat(worker.overtime_hours || 0)
+
+      const dailyPay = daysWorked * payrollRules.daily_rate
+      const overtimePay = overtimeHours * payrollRules.overtime_rate
+      const totalSalary = dailyPay + overtimePay
 
       return {
         workerId: worker.id,
         name: worker.name,
-        bank_name: worker.bankname,
-        account_number: worker.accountnumber,
         daysWorked,
         regularHours,
         overtimeHours,
-        dailyPay: Number(dailyPay),
-        overtimePay: Number(overtimePay),
-        totalSalary: Number(totalSalary),
-      };
-    });
+        dailyPay,
+        overtimePay,
+        totalSalary,
+        bankName: worker.bank_name,
+        accountNumber: worker.account_number,
+      }
+    })
 
-    res.json(payroll);
+    res.json(payrollData)
   } catch (err) {
-    console.error('Error calculating payroll:', err);
-    res.status(500).json({ error: 'Failed to calculate payroll', details: err.message });
+    console.error("Error calculating payroll:", err)
+    res.status(500).json({ message: "Server error" })
   }
-});
+})
 
-// Apply or deduct overtime
-router.post('/overtime', authenticateToken, restrictTo('company_admin'), async (req, res) => {
-  const { workerId, hours, allWorkers, deduct } = req.body;
-  const companyId = req.user.company_id;
+module.exports = router
 
-  try {
-    if (!hours || hours <= 0) {
-      return res.status(400).json({ error: 'Invalid hours' });
-    }
-
-    const hoursAdjustment = deduct ? -parseFloat(hours) : parseFloat(hours);
-
-    if (allWorkers) {
-      const [updatedRows] = await LaborWorker.update(
-        {
-          overtime_hours: Sequelize.literal(`COALESCE("overtime_hours", 0) + ${hoursAdjustment}`),
-        },
-        { 
-          where: { 
-            company_id: companyId,
-            status: 'active'
-          }
-        }
-      );
-
-      if (updatedRows === 0) {
-        return res.status(404).json({ error: 'No active workers found' });
-      }
-
-      const workersWithNegativeOvertime = await LaborWorker.findAll({
-        where: {
-          company_id: companyId,
-          status: 'active',
-          overtime_hours: { [Sequelize.Op.lt]: 0 },
-        },
-      });
-
-      if (workersWithNegativeOvertime.length > 0) {
-        await LaborWorker.update(
-          {
-            overtime_hours: Sequelize.literal(`COALESCE("overtime_hours", 0) - ${hoursAdjustment}`),
-          },
-          { 
-            where: { 
-              company_id: companyId,
-              status: 'active'
-            }
-          }
-        );
-        return res.status(400).json({ error: 'Overtime hours cannot be negative for some workers' });
-      }
-
-      return res.json({ 
-        success: true, 
-        message: `${deduct ? 'Deducted' : 'Added'} ${hours} overtime hours for ${updatedRows} workers` 
-      });
-    } else {
-      if (!workerId) {
-        return res.status(400).json({ error: 'Worker ID is required' });
-      }
-
-      const worker = await LaborWorker.findOne({ 
-        where: { id: workerId, company_id: companyId }
-      });
-
-      if (!worker) {
-        return res.status(404).json({ error: 'Worker not found' });
-      }
-
-      const currentOvertime = Number(worker.overtime_hours) || 0;
-      const newOvertime = currentOvertime + hoursAdjustment;
-      if (newOvertime < 0) {
-        return res.status(400).json({ error: 'Overtime hours cannot be negative' });
-      }
-
-      worker.overtime_hours = newOvertime;
-      await worker.save();
-
-      return res.json({ 
-        success: true, 
-        message: `${deduct ? 'Deducted' : 'Added'} ${hours} overtime hours for worker ${workerId}` 
-      });
-    }
-  } catch (error) {
-    console.error('Error applying overtime:', error);
-    res.status(500).json({ error: 'Failed to apply overtime', details: error.message });
-  }
-});
-
-module.exports = router;

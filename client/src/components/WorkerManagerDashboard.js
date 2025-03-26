@@ -1,297 +1,397 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import axios from 'axios';
-import { useNavigate } from 'react-router-dom';
-import * as XLSX from 'xlsx';
-import { Nav, Tab, Table, Button, Modal, Form, Badge, Alert } from 'react-bootstrap';
+"use client"
+
+import { useState, useEffect, useCallback } from "react"
+import axios from "axios"
+import { useNavigate } from "react-router-dom"
+import * as XLSX from "xlsx"
+import Modal from "./ui/modal"
+import Spinner from "./ui/spinner"
+import { toast } from "./ui/toaster"
+import {
+  Users,
+  FileSpreadsheet,
+  Settings,
+  ClipboardList,
+  Calculator,
+  Plus,
+  Clock,
+  Eye,
+  ToggleLeft,
+  ToggleRight,
+  Trash2,
+} from "lucide-react"
 
 const WorkerManagerDashboard = () => {
-  const [activeTab, setActiveTab] = useState('workers');
-  const [workers, setWorkers] = useState([]);
-  const [filteredWorkers, setFilteredWorkers] = useState([]);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [payrollSearchQuery, setPayrollSearchQuery] = useState('');
-  const [filteredPayrollData, setFilteredPayrollData] = useState([]);
-  const [showWorkerModal, setShowWorkerModal] = useState(false);
-  const [newWorker, setNewWorker] = useState({ name: '', photo: null, bankName: '', accountNumber: '', regdate: '' });
-  const [photoPreview, setPhotoPreview] = useState(null);
-  const [payrollRules, setPayrollRules] = useState({ standard_working_hours: 8, daily_rate: 0, overtime_rate: 0 });
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
-  const [myRequests, setMyRequests] = useState([]);
-  const [showOvertimeModal, setShowOvertimeModal] = useState(false);
-  const [overtimeData, setOvertimeData] = useState({ workerId: '', hours: '', allWorkers: false, deduct: false });
-  const [showPhotoModal, setShowPhotoModal] = useState(false);
-  const [selectedPhoto, setSelectedPhoto] = useState(null);
-  const [payrollData, setPayrollData] = useState([]);
-  const [payrollPeriod, setPayrollPeriod] = useState({ startDate: '', endDate: '' });
-  const [isLoggedIn, setIsLoggedIn] = useState(!!localStorage.getItem('role')); // Check login state
-  const navigate = useNavigate();
+  // State declarations
+  const [activeTab, setActiveTab] = useState("workers")
+  const [workers, setWorkers] = useState([])
+  const [filteredWorkers, setFilteredWorkers] = useState([])
+  const [searchQuery, setSearchQuery] = useState("")
+  const [payrollSearchQuery, setPayrollSearchQuery] = useState("")
+  const [filteredPayrollData, setFilteredPayrollData] = useState([])
+  const [showWorkerModal, setShowWorkerModal] = useState(false)
+  const [newWorker, setNewWorker] = useState({ name: "", photo: null, bankName: "", accountNumber: "", regdate: "" })
+  const [photoPreview, setPhotoPreview] = useState(null)
+  const [payrollRules, setPayrollRules] = useState({ standard_working_hours: 8, daily_rate: 0, overtime_rate: 0 })
+  const [myRequests, setMyRequests] = useState([])
+  const [showOvertimeModal, setShowOvertimeModal] = useState(false)
+  const [overtimeData, setOvertimeData] = useState({ workerId: "", hours: "", allWorkers: false, deduct: false })
+  const [showPhotoModal, setShowPhotoModal] = useState(false)
+  const [selectedPhoto, setSelectedPhoto] = useState(null)
+  const [payrollData, setPayrollData] = useState([])
+  const [payrollPeriod, setPayrollPeriod] = useState({ startDate: "", endDate: "" })
+  const [isLoggedIn, setIsLoggedIn] = useState(!!localStorage.getItem("role"))
+  const [isLoading, setIsLoading] = useState(false)
+  const navigate = useNavigate()
 
-  // Use useCallback to memoize fetchPayroll
+  // Update the fetchPayroll function to properly calculate payroll
   const fetchPayroll = useCallback(async () => {
+    if (!payrollPeriod.startDate || !payrollPeriod.endDate) return
+
+    setIsLoading(true)
     try {
-      const response = await axios.get('http://localhost:3001/api/workers/payroll', {
+      // First, get the workers
+      const workersResponse = await axios.get("http://localhost:3001/api/workers", {
         withCredentials: true,
-        params: { startDate: payrollPeriod.startDate, endDate: payrollPeriod.endDate },
-      });
-      setPayrollData(response.data);
-      setFilteredPayrollData(response.data);
+      })
+
+      // Then, get the payroll rules
+      const rulesResponse = await axios.get("http://localhost:3001/api/payroll-rules", {
+        withCredentials: true,
+      })
+
+      const workers = workersResponse.data
+      const rules = rulesResponse.data
+
+      // Calculate days between start and end dates (inclusive)
+      const startDate = new Date(payrollPeriod.startDate)
+      const endDate = new Date(payrollPeriod.endDate)
+      const daysDiff = Math.floor((endDate - startDate) / (24 * 60 * 60 * 1000)) + 1
+
+      // Calculate payroll for each worker
+      const payrollData = workers.map((worker) => {
+        // Only count active workers
+        const isActive = worker.status === "active"
+        const daysWorked = isActive ? daysDiff : 0
+        const regularHours = daysWorked * (rules.standard_working_hours || 8)
+        const overtimeHours = Number(worker.overtime_hours || 0)
+        const dailyRate = Number(rules.daily_rate || 0)
+        const overtimeRate = Number(rules.overtime_rate || 0)
+
+        const dailyPay = daysWorked * dailyRate
+        const overtimePay = overtimeHours * overtimeRate
+        const totalSalary = dailyPay + overtimePay
+
+        return {
+          workerId: worker.id,
+          name: worker.name,
+          daysWorked,
+          regularHours,
+          overtimeHours,
+          dailyPay,
+          overtimePay,
+          totalSalary,
+          bankName: worker.bankName || worker.bank_name || worker.bankname || "N/A",
+          accountNumber: worker.accountNumber || worker.account_number || worker.accountnumber || "N/A",
+        }
+      })
+
+      setPayrollData(payrollData)
+      setFilteredPayrollData(payrollData)
     } catch (err) {
-      setError('Failed to fetch payroll data');
+      console.error("Payroll calculation error:", err)
+      toast.error("Failed to fetch payroll data")
+    } finally {
+      setIsLoading(false)
     }
-  }, [payrollPeriod.startDate, payrollPeriod.endDate]);
+  }, [payrollPeriod.startDate, payrollPeriod.endDate])
 
   useEffect(() => {
-    if (!isLoggedIn) navigate('/login');
-    if (success) {
-      const timer = setTimeout(() => setSuccess(''), 3000);
-      return () => clearTimeout(timer);
-    }
-  }, [success, isLoggedIn, navigate]);
+    if (!isLoggedIn) navigate("/login")
+  }, [isLoggedIn, navigate])
 
   useEffect(() => {
-    if (searchQuery.trim() === '') {
-      setFilteredWorkers(workers);
+    if (searchQuery.trim() === "") {
+      setFilteredWorkers(workers)
     } else {
-      const filtered = workers.filter((worker) =>
-        worker.name.toLowerCase().includes(searchQuery.toLowerCase())
-      );
-      setFilteredWorkers(filtered);
+      const filtered = workers.filter((worker) => worker.name.toLowerCase().includes(searchQuery.toLowerCase()))
+      setFilteredWorkers(filtered)
     }
-  }, [searchQuery, workers]);
+  }, [searchQuery, workers])
 
   useEffect(() => {
-    if (payrollSearchQuery.trim() === '') {
-      setFilteredPayrollData(payrollData);
+    if (payrollSearchQuery.trim() === "") {
+      setFilteredPayrollData(payrollData)
     } else {
       const filtered = payrollData.filter((entry) =>
-        entry.name.toLowerCase().includes(payrollSearchQuery.toLowerCase())
-      );
-      setFilteredPayrollData(filtered);
+        entry.name.toLowerCase().includes(payrollSearchQuery.toLowerCase()),
+      )
+      setFilteredPayrollData(filtered)
     }
-  }, [payrollSearchQuery, payrollData]);
+  }, [payrollSearchQuery, payrollData])
 
   useEffect(() => {
     if (isLoggedIn) {
-      fetchWorkers();
-      fetchPayrollRules();
-      fetchPendingRequests();
-      if (payrollPeriod.startDate && payrollPeriod.endDate) fetchPayroll();
+      fetchWorkers()
+      fetchPayrollRules()
+      fetchPendingRequests()
+      if (payrollPeriod.startDate && payrollPeriod.endDate) fetchPayroll()
     }
-  }, [payrollPeriod, isLoggedIn, fetchPayroll]); // Include fetchPayroll in the dependency array
+  }, [payrollPeriod, isLoggedIn, fetchPayroll])
 
+  // In the getWorkers function, modify the worker mapping to handle both naming conventions
   const fetchWorkers = async () => {
+    setIsLoading(true)
     try {
-      const response = await axios.get('http://localhost:3001/api/workers', { withCredentials: true });
-      setWorkers(response.data);
-      setFilteredWorkers(response.data);
+      const response = await axios.get("http://localhost:3001/api/workers", { withCredentials: true })
+
+      // Normalize worker data to ensure consistent field names
+      const normalizedWorkers = response.data.map((worker) => ({
+        ...worker,
+        bankName: worker.bankName || worker.bank_name || worker.bankname || "N/A",
+        accountNumber: worker.accountNumber || worker.account_number || worker.accountnumber || "N/A",
+        regdate:
+          worker.regdate ||
+          worker.regDate ||
+          worker.registration_date ||
+          new Date(worker.created_at).toISOString().split("T")[0],
+      }))
+
+      setWorkers(normalizedWorkers)
+      setFilteredWorkers(normalizedWorkers)
     } catch (err) {
-      console.error('Error fetching workers:', err);
-      setError('Failed to fetch workers');
+      toast.error("Failed to fetch workers")
+    } finally {
+      setIsLoading(false)
     }
-  };
+  }
 
   const fetchPayrollRules = async () => {
     try {
-      const response = await axios.get('http://localhost:3001/api/payroll-rules', { withCredentials: true });
+      const response = await axios.get("http://localhost:3001/api/payroll-rules", { withCredentials: true })
       setPayrollRules({
         standard_working_hours: 8,
-        daily_rate: parseFloat(response.data.daily_rate) || 0,
-        overtime_rate: parseFloat(response.data.overtime_rate) || 0,
-      });
+        daily_rate: Number.parseFloat(response.data.daily_rate) || 0,
+        overtime_rate: Number.parseFloat(response.data.overtime_rate) || 0,
+      })
     } catch (err) {
-      console.error('Error fetching payroll rules:', err);
-      setError('Failed to fetch payroll rules');
+      toast.error("Failed to fetch payroll rules")
     }
-  };
+  }
 
   const fetchPendingRequests = async () => {
     try {
-      const response = await axios.get('http://localhost:3001/api/pending-requests/my', { withCredentials: true });
-      setMyRequests(response.data);
+      const response = await axios.get("http://localhost:3001/api/pending-requests/my", { withCredentials: true })
+      setMyRequests(response.data)
     } catch (err) {
-      console.error('Error fetching pending requests:', err);
-      setError('Failed to fetch pending requests');
+      toast.error("Failed to fetch pending requests")
     }
-  };
+  }
 
+  // In the handleToggleWorkerStatus function, update the API endpoint
   const handleToggleWorkerStatus = async (workerId, currentStatus) => {
+    setIsLoading(true)
     try {
-      const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
-      await axios.put(`http://localhost:3001/api/workers/${workerId}/status`, { status: newStatus }, { withCredentials: true });
-      fetchWorkers(); // Refresh the worker list
-      setSuccess(`Worker status updated to ${newStatus}`);
+      const newStatus = currentStatus === "active" ? "inactive" : "active"
+      await axios.patch(
+        `http://localhost:3001/api/workers/${workerId}/status`,
+        { status: newStatus },
+        { withCredentials: true },
+      )
+      fetchWorkers()
+      toast.success(`Worker status updated to ${newStatus}`)
     } catch (err) {
-      setError('Failed to update worker status');
+      console.error("Error updating worker status:", err.response?.data || err)
+      toast.error(err.response?.data?.message || "Failed to update worker status")
+    } finally {
+      setIsLoading(false)
     }
-  };
+  }
 
   const handleDeleteWorker = async (workerId) => {
-    try {
-      await axios.delete(`http://localhost:3001/api/workers/${workerId}`, { withCredentials: true });
-      fetchWorkers(); // Refresh the worker list
-      setSuccess('Worker deleted successfully');
-    } catch (err) {
-      setError('Failed to delete worker');
+    if (window.confirm("Are you sure you want to delete this worker?")) {
+      setIsLoading(true)
+      try {
+        await axios.delete(`http://localhost:3001/api/workers/${workerId}`, {
+          withCredentials: true,
+          headers: { "Content-Type": "application/json" },
+        })
+        fetchWorkers()
+        toast.success("Worker deleted successfully")
+      } catch (err) {
+        toast.error("Failed to delete worker")
+      } finally {
+        setIsLoading(false)
+      }
     }
-  };
+  }
 
   const exportWorkersToExcel = () => {
     if (!payrollRules) {
-      alert('Payroll rules not loaded yet.');
-      return;
+      toast.warning("Payroll rules not loaded yet.")
+      return
     }
     const data = filteredWorkers.map((worker) => ({
       ID: worker.id,
       Name: worker.name,
-      'Daily Rate': payrollRules.daily_rate.toFixed(2),
-      'Overtime Rate': payrollRules.overtime_rate.toFixed(2),
-      'Overtime Hours': worker.overtime_hours || 0,
+      "Daily Rate": Number(payrollRules.daily_rate || 0).toFixed(2),
+      "Overtime Rate": Number(payrollRules.overtime_rate || 0).toFixed(2),
+      "Overtime Hours": Number(worker.overtime_hours || 0).toFixed(2),
       Status: worker.status,
-      'Bank Name': worker.bankName || 'N/A',
-      'Account Number': worker.accountNumber || 'N/A',
-    }));
-    const ws = XLSX.utils.json_to_sheet(data);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Workers');
-    XLSX.writeFile(wb, 'Worker_Payroll_Data.xlsx');
-  };
+      "Bank Name": worker.bankName || worker.bank_name || "N/A",
+      "Account Number": worker.accountNumber || worker.account_number || "N/A",
+    }))
+    const ws = XLSX.utils.json_to_sheet(data)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, "Workers")
+    XLSX.writeFile(wb, "Worker_Payroll_Data.xlsx")
+    toast.success("Workers data exported successfully")
+  }
 
   const exportPayrollToExcel = () => {
     const data = filteredPayrollData.map((entry) => ({
       ID: entry.workerId,
       Name: entry.name,
-      'Days Worked': entry.daysWorked,
-      'Regular Hours': entry.regularHours,
-      'Overtime Hours': entry.overtimeHours,
-      'Daily Pay (Br)': entry.dailyPay.toFixed(2),
-      'Overtime Pay (Br)': entry.overtimePay.toFixed(2),
-      'Total Salary (Br)': entry.totalSalary.toFixed(2),
-      'Bank Name': entry.bankName || 'N/A',
-      'Account Number': entry.accountNumber || 'N/A',
-    }));
-    const ws = XLSX.utils.json_to_sheet(data);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Payroll');
-    XLSX.writeFile(wb, `Payroll_${payrollPeriod.startDate}_to_${payrollPeriod.endDate}.xlsx`);
-  };
+      "Days Worked": entry.daysWorked,
+      "Regular Hours": entry.regularHours,
+      "Overtime Hours": entry.overtimeHours,
+      "Daily Pay (Br)": Number(entry.dailyPay || 0).toFixed(2),
+      "Overtime Pay (Br)": Number(entry.overtimePay || 0).toFixed(2),
+      "Total Salary (Br)": Number(entry.totalSalary || 0).toFixed(2),
+      "Bank Name": entry.bankName || entry.bank_name || "N/A",
+      "Account Number": entry.accountNumber || entry.account_number || "N/A",
+    }))
+    const ws = XLSX.utils.json_to_sheet(data)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, "Payroll")
+    XLSX.writeFile(wb, `Payroll_${payrollPeriod.startDate}_to_${payrollPeriod.endDate}.xlsx`)
+    toast.success("Payroll data exported successfully")
+  }
 
   const handleLogout = async () => {
     try {
-      await axios.post('http://localhost:3001/api/auth/logout', {}, { withCredentials: true });
-      localStorage.clear();
-      setIsLoggedIn(false);
-      navigate('/login');
+      await axios.post("http://localhost:3001/api/auth/logout", {}, { withCredentials: true })
+      localStorage.clear()
+      setIsLoggedIn(false)
+      navigate("/login")
     } catch (err) {
-      console.error('Logout error:', err);
-      localStorage.clear();
-      setIsLoggedIn(false);
-      navigate('/login');
+      console.error("Logout error:", err)
+      localStorage.clear()
+      setIsLoggedIn(false)
+      navigate("/login")
     }
-  };
+  }
 
   const handleCreateWorkerRequest = async (e) => {
-    e.preventDefault();
+    e.preventDefault()
+    setIsLoading(true)
     try {
-        const formData = new FormData();
-        formData.append('type', 'new_worker');
-        formData.append('details', JSON.stringify({
-            name: newWorker.name,
-            bankName: newWorker.bankName,
-            accountNumber: newWorker.accountNumber,
-        }));
-        if (newWorker.photo) {
-            formData.append('photo', newWorker.photo);
-        }
+      const formData = new FormData()
+      formData.append("type", "new_worker")
+      formData.append(
+        "details",
+        JSON.stringify({
+          name: newWorker.name,
+          bankName: newWorker.bankName,
+          accountNumber: newWorker.accountNumber,
+          regdate: new Date().toISOString().split("T")[0], // Add today's date as registration date
+        }),
+      )
+      if (newWorker.photo) {
+        formData.append("photo", newWorker.photo)
+      }
 
-        await axios.post('http://localhost:3001/api/pending-requests', formData, {
-            withCredentials: true,
-            headers: { 'Content-Type': 'multipart/form-data' },
-        });
+      await axios.post("http://localhost:3001/api/pending-requests", formData, {
+        withCredentials: true,
+        headers: { "Content-Type": "multipart/form-data" },
+      })
 
-        setShowWorkerModal(false);
-        setNewWorker({ name: '', photo: null, bankName: '', accountNumber: '' });
-        setPhotoPreview(null);
-        fetchPendingRequests();
-        setSuccess('Worker registration request submitted');
+      setShowWorkerModal(false)
+      setNewWorker({ name: "", photo: null, bankName: "", accountNumber: "", regdate: "" })
+      setPhotoPreview(null)
+      fetchPendingRequests()
+      toast.success("Worker registration request submitted")
     } catch (err) {
-        setError(err.response?.data?.message || 'Failed to submit worker request');
+      toast.error(err.response?.data?.message || "Failed to submit worker request")
+    } finally {
+      setIsLoading(false)
     }
-};
+  }
 
   const handleOvertimeRequest = async (e) => {
-    e.preventDefault();
+    e.preventDefault()
+    setIsLoading(true)
     try {
       const details = overtimeData.allWorkers
-        ? { hours: parseFloat(overtimeData.hours), deduct: overtimeData.deduct }
-        : { workerId: overtimeData.workerId, hours: parseFloat(overtimeData.hours), deduct: overtimeData.deduct };
-      await axios.post('http://localhost:3001/api/pending-requests', {
-        type: overtimeData.allWorkers ? 'overtime_group' : 'overtime_individual',
-        details: JSON.stringify(details),
-      }, { withCredentials: true });
+        ? { hours: Number.parseFloat(overtimeData.hours), deduct: overtimeData.deduct }
+        : { workerId: overtimeData.workerId, hours: Number.parseFloat(overtimeData.hours), deduct: overtimeData.deduct }
+      await axios.post(
+        "http://localhost:3001/api/pending-requests",
+        {
+          type: overtimeData.allWorkers ? "overtime_group" : "overtime_individual",
+          details: JSON.stringify(details),
+        },
+        { withCredentials: true },
+      )
 
-      setShowOvertimeModal(false);
-      setOvertimeData({ workerId: '', hours: '', allWorkers: false, deduct: false });
-      fetchPendingRequests();
-      setSuccess('Overtime request submitted');
+      setShowOvertimeModal(false)
+      setOvertimeData({ workerId: "", hours: "", allWorkers: false, deduct: false })
+      fetchPendingRequests()
+      toast.success("Overtime request submitted")
     } catch (err) {
-      setError(err.response?.data?.message || 'Failed to submit overtime request');
+      toast.error(err.response?.data?.message || "Failed to submit overtime request")
+    } finally {
+      setIsLoading(false)
     }
-  };
+  }
 
   const handleViewPhoto = (photoUrl) => {
     if (!photoUrl) {
-      setError('No photo available for this worker');
-      return;
+      toast.warning("No photo available for this worker")
+      return
     }
-    const fullUrl = photoUrl.startsWith('http') ? photoUrl : `http://localhost:3001${photoUrl}`;
-    setSelectedPhoto(fullUrl);
-    setShowPhotoModal(true);
-  };
+    const fullUrl = photoUrl.startsWith("http") ? photoUrl : `http://localhost:3001${photoUrl}`
+    setSelectedPhoto(fullUrl)
+    setShowPhotoModal(true)
+  }
 
-  if (!isLoggedIn) return null;
+  if (!isLoggedIn) return null
 
-  return (
-    <div className="container mt-4">
-      <div className="d-flex justify-content-between align-items-center mb-3 flex-md-row flex-column">
-        <h2>Worker Manager Dashboard</h2>
-        {isLoggedIn && (
-          <Button variant="secondary" onClick={handleLogout}>Logout</Button>
-        )}
-      </div>
-
-      {error && <Alert variant="danger">{error}</Alert>}
-      {success && <Alert variant="success">{success}</Alert>}
-
-      <Tab.Container activeKey={activeTab} onSelect={(key) => setActiveTab(key)}>
-        <Nav variant="tabs" defaultActiveKey="workers" className="mb-3">
-          <Nav.Item><Nav.Link eventKey="workers">Workers</Nav.Link></Nav.Item>
-          <Nav.Item><Nav.Link eventKey="pending-requests">Pending Requests</Nav.Link></Nav.Item>
-          <Nav.Item><Nav.Link eventKey="payroll">Payroll Rules</Nav.Link></Nav.Item>
-          <Nav.Item><Nav.Link eventKey="payroll-calc">Payroll Calculation</Nav.Link></Nav.Item>
-        </Nav>
-
-        <Tab.Content>
-          <Tab.Pane eventKey="workers">
+  const renderTabContent = () => {
+    switch (activeTab) {
+      case "workers":
+        return (
+          <>
             <div className="d-flex justify-content-between align-items-center mb-3 flex-md-row flex-column">
-              <h3>Manage Workers</h3>
-              <div className="d-flex flex-md-row flex-column align-items-md-center">
-                <Form.Control
+              <h3 className="mb-md-0 mb-2">Manage Workers</h3>
+              <div className="d-flex flex-md-row flex-column align-items-md-center gap-2">
+                <input
                   type="text"
                   placeholder="Search workers by name..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="me-md-2 mb-2 mb-md-0"
-                  style={{ width: '200px' }}
+                  className="form-control me-md-2 mb-2 mb-md-0"
+                  style={{ width: "200px" }}
                 />
-                <Button variant="primary" onClick={() => setShowWorkerModal(true)} className="me-md-2 mb-2 mb-md-0">Add New Worker</Button>
-                <Button variant="info" onClick={() => setShowOvertimeModal(true)} className="me-md-2 mb-2 mb-md-0">Request Overtime</Button>
-                <Button variant="success" onClick={exportWorkersToExcel}>Export to Excel</Button>
+                <button className="btn btn-primary me-md-2 mb-2 mb-md-0" onClick={() => setShowWorkerModal(true)}>
+                  <Plus size={16} className="me-1" /> Add New Worker
+                </button>
+                <button className="btn btn-info me-md-2 mb-2 mb-md-0" onClick={() => setShowOvertimeModal(true)}>
+                  <Clock size={16} className="me-1" /> Request Overtime
+                </button>
+                <button className="btn btn-success" onClick={exportWorkersToExcel}>
+                  <FileSpreadsheet size={16} className="me-1" /> Export to Excel
+                </button>
               </div>
             </div>
-            {filteredWorkers.length > 0 ? (
+            {isLoading ? (
+              <div className="text-center py-5">
+                <Spinner />
+                <p className="mt-2">Loading workers...</p>
+              </div>
+            ) : filteredWorkers.length > 0 ? (
               <div className="table-responsive">
-                <Table striped bordered hover>
+                <table className="table">
                   <thead>
                     <tr>
                       <th>ID</th>
@@ -312,54 +412,81 @@ const WorkerManagerDashboard = () => {
                       <tr key={worker.id}>
                         <td>{worker.id}</td>
                         <td>{worker.name}</td>
-                        <td>{worker.bankName || 'N/A'}</td>
-                        <td>{worker.accountNumber || 'N/A'}</td>
-                        <td>{new Date(worker.regDate).toLocaleDateString()}</td>
-                        <td>{payrollRules.daily_rate.toFixed(2)} Br</td>
-                        <td>{payrollRules.overtime_rate.toFixed(2)} Br</td>
-                        <td>{worker.overtime_hours || 0}</td>
-                        <td><Badge bg={worker.status === 'active' ? 'success' : 'danger'}>{worker.status}</Badge></td>
+                        <td>{worker.bankname || worker.bank_name || worker.bankName || "N/A"}</td>
+                        <td>{worker.accountnumber || worker.account_number || worker.accountNumber || "N/A"}</td>
                         <td>
-                          <Button
-                            variant="info"
-                            size="sm"
-                            onClick={() => handleViewPhoto(worker.photo_url)}
-                            disabled={!worker.photo_url || worker.photo_url === ''}
-                          >
-                            View Picture
-                          </Button>
+                          {worker.regdate || worker.regDate || worker.registration_date
+                            ? new Date(
+                                worker.regdate || worker.regDate || worker.registration_date,
+                              ).toLocaleDateString()
+                            : "N/A"}
+                        </td>
+                        <td>{Number(payrollRules.daily_rate || 0).toFixed(2)} Br</td>
+                        <td>{Number(payrollRules.overtime_rate || 0).toFixed(2)} Br</td>
+                        <td>{Number(worker.overtime_hours || 0).toFixed(2)}</td>
+                        <td>
+                          <span className={`badge ${worker.status === "active" ? "badge-active" : "badge-inactive"}`}>
+                            {worker.status}
+                          </span>
                         </td>
                         <td>
-                          <Button
-                            variant={worker.status === 'active' ? 'warning' : 'success'}
+                          <button
+                            className="btn btn-info btn-sm"
+                            onClick={() => handleViewPhoto(worker.photo_url)}
+                            disabled={!worker.photo_url || worker.photo_url === ""}
+                          >
+                            <Eye size={14} className="me-1" /> View Photo
+                          </button>
+                        </td>
+                        <td>
+                          <button
+                            className={`btn ${worker.status === "active" ? "btn-warning" : "btn-success"} btn-sm btn-action`}
                             onClick={() => handleToggleWorkerStatus(worker.id, worker.status)}
-                            className="btn-action"
                           >
-                            {worker.status === 'active' ? 'Deactivate' : 'Activate'}
-                          </Button>
-                          <Button
-                            variant="danger"
+                            {worker.status === "active" ? (
+                              <>
+                                <ToggleLeft size={14} className="me-1" /> Deactivate
+                              </>
+                            ) : (
+                              <>
+                                <ToggleRight size={14} className="me-1" /> Activate
+                              </>
+                            )}
+                          </button>
+                          <button
+                            className="btn btn-danger btn-sm btn-action"
                             onClick={() => handleDeleteWorker(worker.id)}
-                            className="btn-action ms-md-2"
                           >
-                            Delete
-                          </Button>
+                            <Trash2 size={14} className="me-1" /> Delete
+                          </button>
                         </td>
                       </tr>
                     ))}
                   </tbody>
-                </Table>
+                </table>
               </div>
             ) : (
-              <p>No workers found.</p>
+              <div className="card">
+                <div className="card-body text-center">
+                  <p>No workers found.</p>
+                </div>
+              </div>
             )}
-          </Tab.Pane>
+          </>
+        )
 
-          <Tab.Pane eventKey="pending-requests">
-            <h3>My Pending Requests</h3>
-            {myRequests.length > 0 ? (
+      case "pending-requests":
+        return (
+          <>
+            <h3 className="mb-3">My Pending Requests</h3>
+            {isLoading ? (
+              <div className="text-center py-5">
+                <Spinner />
+                <p className="mt-2">Loading requests...</p>
+              </div>
+            ) : myRequests.length > 0 ? (
               <div className="table-responsive">
-                <Table striped bordered hover>
+                <table className="table">
                   <thead>
                     <tr>
                       <th>Type</th>
@@ -373,274 +500,377 @@ const WorkerManagerDashboard = () => {
                       <tr key={request.id}>
                         <td>{request.request_type}</td>
                         <td>
-                          {request.request_type === 'new_worker' && <>Worker: {request.request_data.name}</>}
-                          {request.request_type === 'overtime_individual' && (
-                            <>Worker ID: {request.request_data.workerId}, Hours: {request.request_data.hours}{request.request_data.deduct ? ' (Deduct)' : ''}</>
+                          {request.request_type === "new_worker" && <>Worker: {request.request_data.name}</>}
+                          {request.request_type === "overtime_individual" && (
+                            <>
+                              Worker ID: {request.request_data.workerId}, Hours: {request.request_data.hours}
+                              {request.request_data.deduct ? " (Deduct)" : ""}
+                            </>
                           )}
-                          {request.request_type === 'overtime_group' && (
-                            <>Hours: {request.request_data.hours} (All Workers){request.request_data.deduct ? ' (Deduct)' : ''}</>
+                          {request.request_type === "overtime_group" && (
+                            <>
+                              Hours: {request.request_data.hours} (All Workers)
+                              {request.request_data.deduct ? " (Deduct)" : ""}
+                            </>
                           )}
                         </td>
-                        <td><Badge bg={request.status === 'pending' ? 'warning' : request.status === 'approved' ? 'success' : 'danger'}>{request.status}</Badge></td>
+                        <td>
+                          <span className={`badge badge-${request.status}`}>{request.status}</span>
+                        </td>
                         <td>{new Date(request.created_at).toLocaleDateString()}</td>
                       </tr>
                     ))}
                   </tbody>
-                </Table>
+                </table>
               </div>
             ) : (
-              <p>No pending requests found.</p>
+              <div className="card">
+                <div className="card-body text-center">
+                  <p>No pending requests found.</p>
+                </div>
+              </div>
             )}
-          </Tab.Pane>
+          </>
+        )
 
-          <Tab.Pane eventKey="payroll">
-            <h3>Payroll Rules</h3>
+      case "payroll":
+        return (
+          <>
+            <h3 className="mb-3">Payroll Rules</h3>
             {payrollRules ? (
-              <div className="payroll-rules-card">
-                <div className="card-header"><h5>Current Payroll Rules</h5></div>
+              <div className="card">
+                <div className="card-header">
+                  <h5>Current Payroll Rules</h5>
+                </div>
                 <div className="card-body">
-                  <Table bordered>
+                  <table className="table">
                     <tbody>
-                      <tr><th>Standard Working Hours/Day</th><td>{payrollRules.standard_working_hours} hours</td></tr>
-                      <tr><th>Daily Rate</th><td>{payrollRules.daily_rate.toFixed(2)} Br</td></tr>
-                      <tr><th>Overtime Rate (per hour)</th><td>{payrollRules.overtime_rate.toFixed(2)} Br</td></tr>
+                      <tr>
+                        <th>Standard Working Hours/Day</th>
+                        <td>{payrollRules.standard_working_hours} hours</td>
+                      </tr>
+                      <tr>
+                        <th>Daily Rate</th>
+                        <td>{payrollRules.daily_rate.toFixed(2)} Br</td>
+                      </tr>
+                      <tr>
+                        <th>Overtime Rate (per hour)</th>
+                        <td>{payrollRules.overtime_rate.toFixed(2)} Br</td>
+                      </tr>
                     </tbody>
-                  </Table>
+                  </table>
                 </div>
               </div>
             ) : (
-              <p>Loading payroll rules...</p>
+              <div className="text-center py-5">
+                <Spinner />
+                <p className="mt-2">Loading payroll rules...</p>
+              </div>
             )}
-          </Tab.Pane>
+          </>
+        )
 
-          <Tab.Pane eventKey="payroll-calc">
-            <h3>Payroll Calculation</h3>
-            <Form className="mb-3">
-              <Form.Group className="d-flex align-items-center flex-md-row flex-column">
-                <Form.Label className="me-md-2 mb-2 mb-md-0">Start Date:</Form.Label>
-                <Form.Control
-                  type="date"
-                  value={payrollPeriod.startDate}
-                  onChange={(e) => setPayrollPeriod({ ...payrollPeriod, startDate: e.target.value })}
-                  className="me-md-3 mb-2 mb-md-0"
-                />
-                <Form.Label className="me-md-2 mb-2 mb-md-0">End Date:</Form.Label>
-                <Form.Control
-                  type="date"
-                  value={payrollPeriod.endDate}
-                  onChange={(e) => setPayrollPeriod({ ...payrollPeriod, endDate: e.target.value })}
-                />
-              </Form.Group>
-            </Form>
-            <div className="d-flex justify-content-between align-items-center mb-3 flex-md-row flex-column">
-              <Form.Control
-                type="text"
-                placeholder="Search payroll by name..."
-                value={payrollSearchQuery}
-                onChange={(e) => setPayrollSearchQuery(e.target.value)}
-                style={{ width: '200px' }}
-                className="mb-2 mb-md-0"
-              />
-              <Button
-                variant="success"
-                onClick={exportPayrollToExcel}
-                disabled={filteredPayrollData.length === 0}
-              >
-                Export to Excel
-              </Button>
+      case "payroll-calc":
+        return (
+          <>
+            <h3 className="mb-3">Payroll Calculation</h3>
+            <div className="card mb-3">
+              <div className="card-body">
+                <div className="d-flex align-items-center flex-md-row flex-column mb-3">
+                  <label className="me-md-2 mb-2 mb-md-0">Start Date:</label>
+                  <input
+                    type="date"
+                    value={payrollPeriod.startDate}
+                    onChange={(e) => setPayrollPeriod({ ...payrollPeriod, startDate: e.target.value })}
+                    className="form-control me-md-3 mb-2 mb-md-0"
+                    style={{ maxWidth: "200px" }}
+                  />
+                  <label className="me-md-2 mb-2 mb-md-0">End Date:</label>
+                  <input
+                    type="date"
+                    value={payrollPeriod.endDate}
+                    onChange={(e) => setPayrollPeriod({ ...payrollPeriod, endDate: e.target.value })}
+                    className="form-control"
+                    style={{ maxWidth: "200px" }}
+                  />
+                </div>
+                <div className="d-flex justify-content-between align-items-center flex-md-row flex-column">
+                  <input
+                    type="text"
+                    placeholder="Search payroll by name..."
+                    value={payrollSearchQuery}
+                    onChange={(e) => setPayrollSearchQuery(e.target.value)}
+                    style={{ maxWidth: "200px" }}
+                    className="form-control mb-2 mb-md-0"
+                  />
+                  <button
+                    className="btn btn-success"
+                    onClick={exportPayrollToExcel}
+                    disabled={filteredPayrollData.length === 0}
+                  >
+                    <FileSpreadsheet size={16} className="me-1" /> Export to Excel
+                  </button>
+                </div>
+              </div>
             </div>
-            {payrollData.length > 0 ? (
+            {isLoading ? (
+              <div className="text-center py-5">
+                <Spinner />
+                <p className="mt-2">Loading payroll data...</p>
+              </div>
+            ) : payrollData.length > 0 ? (
               <div className="table-responsive">
-                <Table striped bordered hover>
-                <thead>
-                  <tr>
-                    <th>ID</th>
-                    <th>Name</th>
-                    <th>Bank Name</th>
-                    <th>Account Number</th>
-                    <th>Registration Date</th>
-                    <th>Daily Rate</th>
-                    <th>Overtime Rate</th>
-                    <th>Overtime Hours</th>
-                    <th>Status</th>
-                    <th>Photo</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredWorkers.map((worker) => (
-                    <tr key={worker.id}>
-                      <td>{worker.id}</td>
-                      <td>{worker.name}</td>
-                      <td>{worker.bankname || 'N/A'}</td> {/* Add bankname */}
-                      <td>{worker.accountnumber || 'N/A'}</td> {/* Add accountnumber */}
-                      <td>{worker.regdate ? new Date(worker.regdate).toLocaleDateString() : 'N/A'}</td> {/* Add regdate */}
-                      <td>{payrollRules.daily_rate.toFixed(2)} Br</td>
-                      <td>{payrollRules.overtime_rate.toFixed(2)} Br</td>
-                      <td>{worker.overtime_hours || 0}</td>
-                      <td>
-                        <Badge className={worker.status === 'active' ? 'status-active' : 'status-inactive'}>
-                          {worker.status}
-                        </Badge>
-                      </td>
-                      <td>
-                        <Button
-                          variant="info"
-                          size="sm"
-                          onClick={() => handleViewPhoto(worker.photo_url)}
-                          disabled={!worker.photo_url}
-                        >
-                          View Photo
-                        </Button>
-                      </td>
-                      <td>
-                        <Button
-                          variant={worker.status === 'active' ? 'warning' : 'success'}
-                          onClick={() => handleToggleWorkerStatus(worker.id, worker.status)}
-                          className="btn-action"
-                        >
-                          {worker.status === 'active' ? 'Deactivate' : 'Activate'}
-                        </Button>
-                        <Button
-                          variant="danger"
-                          onClick={() => handleDeleteWorker(worker.id)}
-                          className="btn-action ms-md-2"
-                        >
-                          Delete
-                        </Button>
-                      </td>
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>Name</th>
+                      <th>Days Worked</th>
+                      <th>Regular Hours</th>
+                      <th>Overtime Hours</th>
+                      <th>Daily Pay (Br)</th>
+                      <th>Overtime Pay (Br)</th>
+                      <th>Total Salary (Br)</th>
+                      <th>Bank Name</th>
+                      <th>Account Number</th>
                     </tr>
-                  ))}
-                </tbody>
-              </Table>
+                  </thead>
+                  <tbody>
+                    {filteredPayrollData.map((entry) => (
+                      <tr key={entry.workerId}>
+                        <td>{entry.workerId}</td>
+                        <td>{entry.name}</td>
+                        <td>{entry.daysWorked}</td>
+                        <td>{entry.regularHours}</td>
+                        <td>{entry.overtimeHours}</td>
+                        <td>{Number(entry.dailyPay || 0).toFixed(2)}</td>
+                        <td>{Number(entry.overtimePay || 0).toFixed(2)}</td>
+                        <td>{Number(entry.totalSalary || 0).toFixed(2)}</td>
+                        <td>{entry.bankname || entry.bank_name || entry.bankName || "N/A"}</td>
+                        <td>{entry.accountnumber || entry.account_number || entry.accountNumber || "N/A"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             ) : (
-              <p>Select a date range to calculate payroll.</p>
+              <div className="card">
+                <div className="card-body text-center">
+                  <p>Select a date range to calculate payroll.</p>
+                </div>
+              </div>
             )}
-          </Tab.Pane>
-        </Tab.Content>
-      </Tab.Container>
+          </>
+        )
 
-      <Modal show={showWorkerModal} onHide={() => setShowWorkerModal(false)}>
-      <Modal.Header closeButton><Modal.Title>Add New Worker</Modal.Title></Modal.Header>
-      <Modal.Body>
-          <Form onSubmit={handleCreateWorkerRequest}>
-              <Form.Group className="mb-3">
-                  <Form.Label>Photo</Form.Label>
-                  <div className="mb-2">
-                      {photoPreview && <img src={photoPreview} alt="Preview" style={{ width: '100px', height: '100px', objectFit: 'cover' }} />}
-                  </div>
-                  <Form.Control
-                      type="file"
-                      accept="image/*"
-                      onChange={(e) => {
-                          const file = e.target.files[0];
-                          setNewWorker({ ...newWorker, photo: file });
-                          setPhotoPreview(URL.createObjectURL(file));
-                      }}
-                  />
-              </Form.Group>
-              <Form.Group className="mb-3">
-                  <Form.Label>Name</Form.Label>
-                  <Form.Control
-                      type="text"
-                      value={newWorker.name}
-                      onChange={(e) => setNewWorker({ ...newWorker, name: e.target.value })}
-                      required
-                  />
-              </Form.Group>
-              <Form.Group className="mb-3">
-                  <Form.Label>Bank Name</Form.Label>
-                  <Form.Control
-                      type="text"
-                      value={newWorker.bankName}
-                      onChange={(e) => setNewWorker({ ...newWorker, bankName: e.target.value })}
-                      required
-                  />
-              </Form.Group>
-              <Form.Group className="mb-3">
-                  <Form.Label>Account Number</Form.Label>
-                  <Form.Control
-                      type="text"
-                      value={newWorker.accountNumber}
-                      onChange={(e) => setNewWorker({ ...newWorker, accountNumber: e.target.value })}
-                      required
-                  />
-              </Form.Group>
-              <Button type="submit" variant="primary">Submit Request</Button>
-          </Form>
-      </Modal.Body>
-  </Modal>
+      default:
+        return null
+    }
+  }
 
-      <Modal show={showOvertimeModal} onHide={() => setShowOvertimeModal(false)}>
-        <Modal.Header closeButton><Modal.Title>Request Overtime</Modal.Title></Modal.Header>
-        <Modal.Body>
-          <Form onSubmit={handleOvertimeRequest}>
-            <Form.Group className="mb-3">
-              <Form.Check
+  return (
+    <div className="container mt-4 fade-in">
+      <div className="dashboard-header">
+        <h2 className="dashboard-title">Worker Manager Dashboard</h2>
+        {isLoggedIn && (
+          <button className="btn btn-secondary" onClick={handleLogout}>
+            Logout
+          </button>
+        )}
+      </div>
+
+      <div className="tabs mb-3">
+        <div className={`tab ${activeTab === "workers" ? "active" : ""}`} onClick={() => setActiveTab("workers")}>
+          <Users size={16} className="me-1" /> Workers
+        </div>
+        <div
+          className={`tab ${activeTab === "pending-requests" ? "active" : ""}`}
+          onClick={() => setActiveTab("pending-requests")}
+        >
+          <ClipboardList size={16} className="me-1" /> Pending Requests
+        </div>
+        <div className={`tab ${activeTab === "payroll" ? "active" : ""}`} onClick={() => setActiveTab("payroll")}>
+          <Settings size={16} className="me-1" /> Payroll Rules
+        </div>
+        <div
+          className={`tab ${activeTab === "payroll-calc" ? "active" : ""}`}
+          onClick={() => setActiveTab("payroll-calc")}
+        >
+          <Calculator size={16} className="me-1" /> Payroll Calculation
+        </div>
+      </div>
+
+      {renderTabContent()}
+
+      {/* Worker Modal */}
+      <Modal isOpen={showWorkerModal} onClose={() => setShowWorkerModal(false)} title="Add New Worker">
+        <form onSubmit={handleCreateWorkerRequest}>
+          <div className="form-group">
+            <label className="form-label">Photo</label>
+            <div className="mb-2">
+              {photoPreview && <img src={photoPreview || "/placeholder.svg"} alt="Preview" className="photo-preview" />}
+            </div>
+            <div className="d-flex flex-column">
+              <input
+                type="file"
+                accept="image/*"
+                capture="environment"
+                onChange={(e) => {
+                  const file = e.target.files[0]
+                  if (file) {
+                    setNewWorker({ ...newWorker, photo: file })
+                    setPhotoPreview(URL.createObjectURL(file))
+                  }
+                }}
+                className="form-control mb-2"
+              />
+              <small className="text-muted">On mobile devices, you can take a photo directly with your camera.</small>
+            </div>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Name</label>
+            <input
+              type="text"
+              value={newWorker.name}
+              onChange={(e) => setNewWorker({ ...newWorker, name: e.target.value })}
+              required
+              className="form-control"
+            />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Bank Name</label>
+            <input
+              type="text"
+              value={newWorker.bankName}
+              onChange={(e) => setNewWorker({ ...newWorker, bankName: e.target.value })}
+              required
+              className="form-control"
+            />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Account Number</label>
+            <input
+              type="text"
+              value={newWorker.accountNumber}
+              onChange={(e) => setNewWorker({ ...newWorker, accountNumber: e.target.value })}
+              required
+              className="form-control"
+            />
+          </div>
+          <div className="d-flex justify-content-end mt-3">
+            <button type="button" className="btn btn-secondary me-2" onClick={() => setShowWorkerModal(false)}>
+              Cancel
+            </button>
+            <button type="submit" className="btn btn-primary" disabled={isLoading}>
+              {isLoading ? (
+                <>
+                  <Spinner size="small" className="me-2" />
+                  Submitting...
+                </>
+              ) : (
+                "Submit Request"
+              )}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Overtime Modal */}
+      <Modal isOpen={showOvertimeModal} onClose={() => setShowOvertimeModal(false)} title="Request Overtime">
+        <form onSubmit={handleOvertimeRequest}>
+          <div className="form-group">
+            <div className="d-flex align-items-center">
+              <input
                 type="checkbox"
-                label="Apply to all workers"
+                id="allWorkers"
                 checked={overtimeData.allWorkers}
                 onChange={(e) => setOvertimeData({ ...overtimeData, allWorkers: e.target.checked })}
+                className="me-2"
               />
-            </Form.Group>
-            {!overtimeData.allWorkers && (
-              <Form.Group className="mb-3">
-                <Form.Label>Worker</Form.Label>
-                <Form.Select
-                  value={overtimeData.workerId}
-                  onChange={(e) => setOvertimeData({ ...overtimeData, workerId: e.target.value })}
-                  required
-                >
-                  <option value="">Select worker</option>
-                  {workers.map(worker => (
-                    <option key={worker.id} value={worker.id}>{worker.name}</option>
-                  ))}
-                </Form.Select>
-              </Form.Group>
-            )}
-            <Form.Group className="mb-3">
-              <Form.Label>Hours</Form.Label>
-              <Form.Control
-                type="number"
-                step="0.5"
-                value={overtimeData.hours}
-                onChange={(e) => setOvertimeData({ ...overtimeData, hours: e.target.value })}
+              <label htmlFor="allWorkers" className="form-label mb-0">
+                Apply to all workers
+              </label>
+            </div>
+          </div>
+          {!overtimeData.allWorkers && (
+            <div className="form-group">
+              <label className="form-label">Worker</label>
+              <select
+                value={overtimeData.workerId}
+                onChange={(e) => setOvertimeData({ ...overtimeData, workerId: e.target.value })}
                 required
-              />
-            </Form.Group>
-            <Form.Group className="mb-3">
-              <Form.Check
+                className="form-control"
+              >
+                <option value="">Select worker</option>
+                {workers.map((worker) => (
+                  <option key={worker.id} value={worker.id}>
+                    {worker.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          <div className="form-group">
+            <label className="form-label">Hours</label>
+            <input
+              type="number"
+              step="0.5"
+              value={overtimeData.hours}
+              onChange={(e) => setOvertimeData({ ...overtimeData, hours: e.target.value })}
+              required
+              className="form-control"
+            />
+          </div>
+          <div className="form-group">
+            <div className="d-flex align-items-center">
+              <input
                 type="checkbox"
-                label="Deduct Overtime"
+                id="deductOvertime"
                 checked={overtimeData.deduct}
                 onChange={(e) => setOvertimeData({ ...overtimeData, deduct: e.target.checked })}
+                className="me-2"
               />
-            </Form.Group>
-            <Button type="submit" variant="primary">
-              {overtimeData.deduct ? 'Request Overtime Deduction' : 'Request Overtime Addition'}
-            </Button>
-          </Form>
-        </Modal.Body>
+              <label htmlFor="deductOvertime" className="form-label mb-0">
+                Deduct Overtime
+              </label>
+            </div>
+          </div>
+          <div className="d-flex justify-content-end mt-3">
+            <button type="button" className="btn btn-secondary me-2" onClick={() => setShowOvertimeModal(false)}>
+              Cancel
+            </button>
+            <button type="submit" className="btn btn-primary" disabled={isLoading}>
+              {isLoading ? (
+                <>
+                  <Spinner size="small" className="me-2" />
+                  {overtimeData.deduct ? "Requesting Deduction..." : "Requesting Addition..."}
+                </>
+              ) : overtimeData.deduct ? (
+                "Request Overtime Deduction"
+              ) : (
+                "Request Overtime Addition"
+              )}
+            </button>
+          </div>
+        </form>
       </Modal>
 
-      <Modal show={showPhotoModal} onHide={() => setShowPhotoModal(false)}>
-        <Modal.Header closeButton><Modal.Title>Worker Photo</Modal.Title></Modal.Header>
-        <Modal.Body>
-          {selectedPhoto ? (
-            <img 
-              src={selectedPhoto} 
-              style={{ width: '100%', maxHeight: '400px', objectFit: 'contain' }} 
-              alt="Worker" 
-              onError={() => setError('Failed to load photo')}
-            />
-          ) : (
-            <p>No photo available.</p>
-          )}
-        </Modal.Body>
+      {/* Photo Modal */}
+      <Modal isOpen={showPhotoModal} onClose={() => setShowPhotoModal(false)} title="Worker Photo">
+        {selectedPhoto ? (
+          <img
+            src={selectedPhoto || "/placeholder.svg"}
+            alt="Worker"
+            style={{ width: "100%", maxHeight: "400px", objectFit: "contain" }}
+            onError={() => toast.error("Failed to load photo")}
+          />
+        ) : (
+          <p>No photo available.</p>
+        )}
       </Modal>
     </div>
-  );
-};
+  )
+}
 
-export default WorkerManagerDashboard;
+export default WorkerManagerDashboard
+

@@ -1,73 +1,95 @@
-  const jwt = require('jsonwebtoken');
-  const { CompanyAdmin } = require('../models');
-  require('dotenv').config();
+const jwt = require("jsonwebtoken");
+const { CompanyAdmin, WorkerManager } = require("../models");
+const { logger } = require("../utils/logger");
 
-  const authenticateToken = async (req, res, next) => {
-    try {
-      const token = req.cookies.token; // Read token from cookie
-      console.log('Received Token from Cookie:', token);
-      if (!token) {
-        console.log('No token provided');
-        return res.status(401).json({ error: 'No token provided' });
-      }
-
-      console.log('Authenticating token:', token);
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || '1234');
-      console.log('Decoded user:', decoded);
-
-      const user = await CompanyAdmin.findByPk(decoded.id);
-      if (!user) {
-        console.log('User not found in database');
-        return res.status(403).json({ error: 'User not found' });
-      }
-      if (user.status !== 'active') {
-        console.log('User account is deactivated');
-        return res.status(403).json({ error: 'Account deactivated' });
-      }
-
-      req.user = { ...decoded, status: user.status };
-      next();
-    } catch (err) {
-      console.error('Auth middleware error:', err.message);
-      res.status(403).json({ error: 'Invalid or expired token' });
-    }
-  };
-
-  const restrictTo = (...roles) => {
-    return (req, res, next) => {
-      console.log('Checking role access:', {
-        userRole: req.user?.role,
-        allowedRoles: roles,
-        user: req.user,
+const authenticateToken = async (req, res, next) => {
+  try {
+    const token = req.cookies.token;
+    
+    if (!token) {
+      logger.warn("No token found in cookies");
+      return res.status(401).json({ 
+        error: "Authentication required",
+        code: "UNAUTHENTICATED"
       });
-      if (!req.user || !roles.includes(req.user.role)) {
-        console.log('Access denied: Role not allowed');
-        return res.status(403).json({
-          error: 'You do not have permission to perform this action',
-        });
-      }
-      console.log('Access granted: Role allowed');
-      next();
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || "1234");
+    
+    // Find user based on role
+    let user;
+    if (decoded.role === "company_admin") {
+      user = await CompanyAdmin.findByPk(decoded.id);
+    } else if (decoded.role === "worker_manager") {
+      user = await WorkerManager.findByPk(decoded.id);
+    }
+
+    if (!user) {
+      logger.warn(`User not found for ID: ${decoded.id}`);
+      return res.status(403).json({ 
+        error: "User account not found",
+        code: "USER_NOT_FOUND"
+      });
+    }
+
+    if (user.status !== "active") {
+      logger.warn(`User account inactive for ID: ${decoded.id}`);
+      return res.status(403).json({ 
+        error: "Account is deactivated",
+        code: "ACCOUNT_DEACTIVATED"
+      });
+    }
+
+    // Attach user to request
+    req.user = {
+      id: user.id,
+      role: user.role,
+      company_id: user.company_id,
+      username: user.username
     };
-  };
 
-  const requireSuperAdmin = (req, res, next) => {
-    console.log('Checking for super admin:', {
-      userRole: req.user?.role,
-      user: req.user,
-    });
-    if (!req.user || req.user.role !== 'super_admin') {
-      console.log('Access denied: Super admin required');
-      return res.status(403).json({
-        error: 'Access denied. Super admin privileges required.',
+    next();
+  } catch (err) {
+    logger.error(`Authentication error: ${err.message}`);
+    
+    if (err.name === "TokenExpiredError") {
+      return res.status(401).json({ 
+        error: "Session expired",
+        code: "TOKEN_EXPIRED"
       });
     }
-    console.log('Access granted: Super admin confirmed');
+    
+    return res.status(403).json({ 
+      error: "Invalid authentication token",
+      code: "INVALID_TOKEN"
+    });
+  }
+};
+
+const requireSuperAdmin = (req, res, next) => {
+  if (!req.user || req.user.role !== "super_admin") {
+    return res.status(403).json({ 
+      error: "Super admin access required",
+      code: "SUPER_ADMIN_REQUIRED"
+    });
+  }
+  next();
+};
+
+const restrictTo = (...roles) => {
+  return (req, res, next) => {
+    if (!req.user || !roles.includes(req.user.role)) {
+      return res.status(403).json({ 
+        error: "Insufficient permissions",
+        code: "INSUFFICIENT_PERMISSIONS"
+      });
+    }
     next();
   };
+};
 
-  module.exports = {
-    authenticateToken,
-    restrictTo,
-    requireSuperAdmin,
-  };
+module.exports = {
+  authenticateToken,
+  requireSuperAdmin,
+  restrictTo
+};

@@ -1,43 +1,36 @@
 const { DataTypes, Model } = require("sequelize")
 
 module.exports = (sequelize) => {
-  class WorkLog extends Model {}
+  class WorkerManager extends Model {}
 
-  WorkLog.init(
+  WorkerManager.init(
     {
       id: {
         type: DataTypes.INTEGER,
         primaryKey: true,
         autoIncrement: true,
       },
-      worker_id: {
-        type: DataTypes.INTEGER,
+      username: {
+        type: DataTypes.STRING(50),
         allowNull: false,
+        unique: true,
+      },
+      password: {
+        type: DataTypes.STRING(255),
+        allowNull: false,
+      },
+      role: {
+        type: DataTypes.STRING(20),
+        allowNull: false,
+        defaultValue: "worker_manager",
       },
       company_id: {
         type: DataTypes.INTEGER,
         allowNull: false,
       },
-      date: {
-        type: DataTypes.DATEONLY,
-        allowNull: false,
-      },
-      hours_worked: {
-        type: DataTypes.FLOAT,
-        allowNull: false,
-      },
-      overtime_hours: {
-        type: DataTypes.FLOAT,
-        allowNull: true,
-        defaultValue: 0,
-      },
       status: {
-        type: DataTypes.ENUM("pending", "approved", "rejected"),
-        defaultValue: "pending",
-      },
-      created_by: {
-        type: DataTypes.INTEGER,
-        allowNull: false,
+        type: DataTypes.STRING(20),
+        defaultValue: "active",
       },
       created_at: {
         type: DataTypes.DATE,
@@ -50,14 +43,14 @@ module.exports = (sequelize) => {
     },
     {
       sequelize,
-      modelName: "WorkLog",
-      tableName: "work_logs",
+      modelName: "WorkerManager",
+      tableName: "worker_managers",
       timestamps: true,
       createdAt: "created_at",
       updatedAt: "updated_at",
     },
   )
 
-  return WorkLog
+  return WorkerManager
 }
 

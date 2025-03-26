@@ -1,3 +1,4 @@
+const { body, query, validationResult } = require('express-validator');
 const { PayrollRule, WorkLog } = require('../models');
 const { Op } = require('sequelize');
 
@@ -87,61 +88,63 @@ exports.updatePayrollRules = async (req, res) => {
   }
 };
 
-exports.calculateSalary = async (req, res) => {
-  try {
-    const { worker_id, start_date, end_date } = req.query;
-
-    if (!worker_id || !start_date || !end_date) {
-      return res.status(400).json({ error: 'Missing required query parameters: worker_id, start_date, end_date' });
+exports.calculateSalary = [
+  query('worker_id').notEmpty().withMessage('Worker ID is required').isInt().withMessage('Worker ID must be an integer'),
+  query('start_date').notEmpty().withMessage('Start date is required').isISO8601().withMessage('Start date must be a valid date'),
+  query('end_date').notEmpty().withMessage('End date is required').isISO8601().withMessage('End date must be a valid date'),
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
     }
 
-    const rules = await PayrollRule.findOne({
-      where: { company_id: req.user.company_id },
-    });
+    try {
+      const { worker_id, start_date, end_date } = req.query;
 
-    if (!rules) {
-      return res.status(400).json({ error: 'Payroll rules not set' });
-    }
+      const rules = await PayrollRule.findOne({
+        where: { company_id: req.user.company_id }
+      });
+      if (!rules) {
+        return res.status(400).json({ error: 'Payroll rules not set' });
+      }
 
-    const workLogs = await WorkLog.findAll({
-      where: {
+      const workLogs = await WorkLog.findAll({
+        where: {
+          worker_id,
+          date: { [Op.between]: [start_date, end_date] }
+        }
+      });
+
+      let totalSalary = 0;
+      let totalRegularHours = 0;
+      let totalOvertimeHours = 0;
+
+      workLogs.forEach(log => {
+        const regularHours = Math.min(log.hours_worked, rules.standard_working_hours);
+        const regularPay = (rules.daily_rate / rules.standard_working_hours) * regularHours;
+        const overtimeHours = Math.max(0, log.hours_worked - rules.standard_working_hours);
+        const overtimePay = overtimeHours * rules.overtime_rate;
+
+        totalRegularHours += regularHours;
+        totalOvertimeHours += overtimeHours;
+        totalSalary += regularPay + overtimePay;
+      });
+
+      res.json({
         worker_id,
-        date: {
-          [Op.between]: [start_date, end_date],
-        },
-      },
-    });
-
-    let totalSalary = 0;
-    let totalRegularHours = 0;
-    let totalOvertimeHours = 0;
-
-    workLogs.forEach((log) => {
-      const regularHours = Math.min(log.hours_worked, rules.standard_working_hours);
-      const regularPay = (rules.daily_rate / rules.standard_working_hours) * regularHours;
-
-      const overtimeHours = Math.max(0, log.hours_worked - rules.standard_working_hours);
-      const overtimePay = overtimeHours * rules.overtime_rate;
-
-      totalRegularHours += regularHours;
-      totalOvertimeHours += overtimeHours;
-      totalSalary += regularPay + overtimePay;
-    });
-
-    res.json({
-      worker_id,
-      period: { start_date, end_date },
-      total_regular_hours: totalRegularHours,
-      total_overtime_hours: totalOvertimeHours,
-      total_salary: Number(totalSalary.toFixed(2)),
-      details: {
-        daily_rate: Number(rules.daily_rate),
-        overtime_rate: Number(rules.overtime_rate),
-        standard_working_hours: rules.standard_working_hours,
-      },
-    });
-  } catch (err) {
-    console.error('Error calculating salary:', err);
-    res.status(500).json({ error: 'Failed to calculate salary', details: err.message });
+        period: { start_date, end_date },
+        total_regular_hours: totalRegularHours,
+        total_overtime_hours: totalOvertimeHours,
+        total_salary: Number(totalSalary.toFixed(2)), // Ensure consistent decimal places
+        details: {
+          daily_rate: Number(rules.daily_rate),
+          overtime_rate: Number(rules.overtime_rate),
+          standard_working_hours: rules.standard_working_hours
+        }
+      });
+    } catch (err) {
+      console.error('Error calculating salary:', err);
+      res.status(500).json({ error: 'Failed to calculate salary', details: err.message });
+    }
   }
-};
+];
