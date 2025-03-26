@@ -179,9 +179,14 @@ sequelize.authenticate()
     logger.info('Database connection established');
     
     // Sync models (use { force: true } only in development for resetting DB)
-    return sequelize.sync({ alter: true });
+    return sequelize.sync({
+      alter: true,       // Auto-alter tables to match models
+      force: false,      // NEVER set to true in production!
+      logging: msg => logger.info(msg)  // Log sync operations
+    });
   })
   .then(() => {
+    logger.info('Database synchronization complete');
     app.listen(PORT, "0.0.0.0", () => {
       logger.info(`Server running on port ${PORT}`);
       console.log('\nServer accessible at:');
